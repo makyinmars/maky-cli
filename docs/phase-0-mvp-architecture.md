@@ -11,6 +11,7 @@ Create a clean project baseline so every next phase is fast and safe to build.
 ## Phase 0 Non-Goals
 
 Do not implement these yet:
+
 - full TUI behavior,
 - chat loop,
 - OpenAI/OAuth integration,
@@ -83,6 +84,7 @@ src/
 ## Handoff to Phase 1
 
 When Phase 0 is complete:
+
 - keep module boundaries stable,
 - start terminal lifecycle + event loop architecture in Phase 1,
 - avoid adding provider/auth logic yet.
