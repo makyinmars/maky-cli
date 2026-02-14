@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use tracing::debug;
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -11,8 +13,18 @@ use clap::Parser;
 )]
 struct Cli;
 
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    fmt().with_env_filter(env_filter).with_target(false).init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _cli = Cli::parse();
+    init_tracing();
+
+    let cli = Cli::parse();
+    debug!(?cli, "parsed cli arguments");
+
     Ok(())
 }
