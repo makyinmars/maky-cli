@@ -166,13 +166,13 @@ Goal: Make MVP stable enough for daily use.
 
 Tasks:
 - Add panic hook + guaranteed terminal restore.
-- Add unit tests for config parsing, session serialization, tool path guards.
-- Add integration smoke test for non-TUI provider/session path.
+- Add targeted unit tests for important logic (config parsing, session serialization, tool path guards).
+- Add an integration smoke test for an important non-TUI provider/session path.
 - Improve error messages (actionable, short, contextual).
 
 Done when:
 - Crash paths still restore terminal.
-- Core modules have test coverage on happy path + key failures.
+- Important modules have test coverage on happy path + key failures.
 
 Rust learning focus:
 - test layout (`#[cfg(test)]`, `tests/`), error typing, defensive coding.

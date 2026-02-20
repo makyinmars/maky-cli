@@ -20,8 +20,8 @@ Do not implement these yet:
 1. **Failure behavior is designed, not accidental**  
 Terminal restore and panic paths are explicit.
 
-2. **Tests cover core boundaries**  
-Config, session persistence, and tool safety checks get targeted tests.
+2. **Tests cover important boundaries**  
+Config, session persistence, and tool safety checks get targeted tests where failures would be costly.
 
 3. **Operational diagnostics improve**  
 Errors are concise for users and detailed in logs.
@@ -35,6 +35,7 @@ Errors are concise for users and detailed in logs.
 
 ## Test Strategy (MVP Scope)
 
+- Prioritize tests only for important behavior and high-risk boundaries.
 - Unit tests:
   - config parsing/merge/validation
   - session event serialization/replay
@@ -49,7 +50,7 @@ Errors are concise for users and detailed in logs.
 - [ ] Step 3: Add unit test plan for config layering and invalid input cases.
 - [ ] Step 4: Add unit test plan for session JSONL round-trip and replay.
 - [ ] Step 5: Add unit test plan for workspace path guards and traversal attempts.
-- [ ] Step 6: Add integration smoke test plan for provider-session path.
+- [ ] Step 6: Add integration smoke test plan for the most important provider-session path.
 - [ ] Step 7: Define error message style guide (short, actionable, contextual).
 - [ ] Step 8: Ensure logs retain full technical diagnostics (`tracing`).
 - [ ] Step 9: Define expected behavior for recoverable vs fatal errors.
@@ -58,7 +59,7 @@ Errors are concise for users and detailed in logs.
 ## Phase 8 Done Criteria (Checklist)
 
 - [ ] Terminal state is restored on all tested crash/exit paths.
-- [ ] Core modules have unit tests for happy path + key failures.
+- [ ] Important modules have unit tests for happy path + key failures.
 - [ ] At least one integration smoke path exists.
 - [ ] User-facing errors are readable and actionable.
 - [ ] Logs provide enough detail for debugging.

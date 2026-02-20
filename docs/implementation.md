@@ -241,6 +241,7 @@ Very useful additions:
 - `once_cell` - global lazy init for static config/logging helpers.
 
 Testing crates:
+- Add these only when needed for important unit or integration coverage.
 - `pretty_assertions` - readable assertion diffs.
 - `tempfile` - isolated filesystem tests.
 - `wiremock` or `httpmock` - API/provider integration tests without real network.
