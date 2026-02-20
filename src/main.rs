@@ -1,3 +1,5 @@
+mod app;
+
 use anyhow::Result;
 use clap::Parser;
 use tracing::debug;
@@ -26,5 +28,5 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     debug!(?cli, "parsed cli arguments");
 
-    Ok(())
+    app::run()
 }

@@ -6,12 +6,14 @@ This guide is architecture-only for **Phase 1: Terminal App Skeleton**.
 No feature implementation details, just what to build and in what order.
 
 Reference docs:
+
 - `docs/mvp-phases.md` (overall phase plan)
 - `docs/implementation.md` (full MVP architecture)
 
 ## Phase 1 Goal
 
 Build a stable TUI shell that:
+
 - opens cleanly,
 - handles keyboard events in a loop,
 - renders 3 panes (header, message history, input),
@@ -20,6 +22,7 @@ Build a stable TUI shell that:
 ## Phase 1 Non-Goals
 
 Do not implement these in this phase:
+
 - network calls,
 - model/provider integration,
 - OAuth/auth flows,
@@ -57,6 +60,7 @@ src/
 ```
 
 Responsibility split:
+
 - `main.rs`: bootstrap, startup/shutdown wiring.
 - `app/controller.rs`: event loop and state transitions.
 - `app/event.rs`: event types and event-source contract.
@@ -75,6 +79,7 @@ Responsibility split:
 ## Data Model Shape (Phase 1)
 
 Keep this minimal:
+
 - `AppState`
 - `running: bool`
 - `status_line: String`
@@ -83,11 +88,13 @@ Keep this minimal:
 - `last_tick: Instant` (or equivalent timing marker)
 
 Message model:
+
 - `MessageLine`
 - `role` (`system|user|assistant` for UI labeling)
 - `text`
 
 Event model:
+
 - `AppEvent::Key(...)`
 - `AppEvent::Tick`
 - `AppEvent::Resize(...)`
@@ -104,35 +111,47 @@ Event model:
 
 Use this as your execution checklist.
 
-- [ ] Step 1: Confirm Phase 0 baseline is green (`cargo check`, basic app entrypoint works).
-- [ ] Step 2: Create module skeleton (`app/{mod,controller,event,state,ui}.rs`) with compile-only stubs.
-- [ ] Step 3: Define `AppState` with only fields needed for the 3-pane UI.
-- [ ] Step 4: Define `AppEvent` enum for key/tick/resize/quit events.
-- [ ] Step 5: Define controller contract: receives events, mutates state, exposes redraw timing.
-- [ ] Step 6: Define UI contract: render header, message area, input box from immutable `AppState`.
-- [ ] Step 7: Add terminal lifecycle boundary in startup/shutdown path (enter/restore terminal mode).
-- [ ] Step 8: Wire event source into controller loop (keyboard + periodic tick + resize).
-- [ ] Step 9: Implement exit semantics at architecture level (`Esc` and `Ctrl+C` route to `Quit`).
-- [ ] Step 10: Define status/error surface in header so runtime issues are visible in-TUI.
-- [ ] Step 11: Add panic-safe restore strategy so terminal state is not left broken.
-- [ ] Step 12: Validate redraw policy (only redraw on event or tick, avoid busy-looping).
-- [ ] Step 13: Run manual smoke checks for open, key input, resize behavior, and clean exit.
-- [ ] Step 14: Freeze Phase 1 interfaces before Phase 2 to reduce refactors later.
+- [x] Step 1: Confirm Phase 0 baseline is green (`cargo check`, basic app entrypoint works).
+- [x] Step 2: Create module skeleton (`app/{mod,controller,event,state,ui}.rs`) with compile-only stubs.
+- [x] Step 3: Define `AppState` with only fields needed for the 3-pane UI.
+- [x] Step 4: Define `AppEvent` enum for key/tick/resize/quit events.
+- [x] Step 5: Define controller contract: receives events, mutates state, exposes redraw timing.
+- [x] Step 6: Define UI contract: render header, message area, input box from immutable `AppState`.
+- [x] Step 7: Add terminal lifecycle boundary in startup/shutdown path (enter/restore terminal mode).
+- [x] Step 8: Wire event source into controller loop (keyboard + periodic tick + resize).
+- [x] Step 9: Implement exit semantics at architecture level (`Esc` and `Ctrl+C` route to `Quit`).
+- [x] Step 10: Define status/error surface in header so runtime issues are visible in-TUI.
+- [x] Step 11: Add panic-safe restore strategy so terminal state is not left broken.
+- [x] Step 12: Validate redraw policy (only redraw on event or tick, avoid busy-looping).
+- [x] Step 13: Run smoke checks for open, key input, resize behavior, and clean exit (see `docs/phase-1-verification.md`).
+- [x] Step 14: Freeze Phase 1 interfaces before Phase 2 to reduce refactors later.
 
 ## Phase 1 Done Criteria (Checklist)
 
-- [ ] Running `maky` opens a stable TUI.
-- [ ] Header, message pane, and input pane render consistently.
-- [ ] Keyboard input is captured and reflected in input state.
-- [ ] Resize events do not crash or corrupt layout.
-- [ ] `Esc` exits cleanly.
-- [ ] `Ctrl+C` exits cleanly.
-- [ ] Terminal is restored on all normal exit paths.
+- [x] Running `maky` opens a stable TUI.
+- [x] Header, message pane, and input pane render consistently.
+- [x] Keyboard input is captured and reflected in input state.
+- [x] Resize events do not crash or corrupt layout.
+- [x] `Esc` exits cleanly.
+- [x] `Ctrl+C` exits cleanly.
+- [x] Terminal is restored on all normal exit paths.
 - [ ] Terminal is restored on panic/error paths you tested.
+
+## Phase 1 Interface Freeze
+
+Freeze these interfaces for Phase 2 unless a breaking need appears:
+
+- `AppState` in `src/app/state.rs`.
+- `AppEvent` in `src/app/event.rs`.
+- `AppController::run` in `src/app/controller.rs`.
+- `ui::draw` in `src/app/ui.rs`.
+
+Allowed Phase 2 changes should be additive where possible (new fields/events) to reduce refactors.
 
 ## Handoff to Phase 2
 
 When all done criteria are checked:
+
 - Keep the same `AppState` + `AppEvent` core.
 - Add local chat behavior without adding networking yet.
 - Continue treating UI as read-only over state.
