@@ -108,9 +108,9 @@ Goal: Persist conversations and resume them.
 
 Tasks:
 - Add `AgentSession` type (session id, messages, timestamps, model id).
-- Save conversation events in the configured session store (JSONL append log or SQLite).
-- Add `session_store` config selection (`jsonl` default, optional `sqlite`).
-- Load latest session on startup (or via `--resume <id>`) from the selected store.
+- Save conversation events in SQLite.
+- Add `session_db_path` config setting.
+- Load latest session on startup (or via `--resume <id>`) from SQLite.
 - Add `/new` command to start a fresh session.
 
 Done when:
@@ -118,7 +118,7 @@ Done when:
 - Multiple sessions can be resumed by id.
 
 Rust learning focus:
-- serde serialization, file I/O, append-only logs, and basic SQLite schema/transactions.
+- serde serialization and basic SQLite schema/transactions.
 
 ## Phase 6: Tools v0 with Safety
 
@@ -167,7 +167,7 @@ Goal: Make MVP stable enough for daily use.
 
 Tasks:
 - Add panic hook + guaranteed terminal restore.
-- Add targeted unit tests for important logic (config parsing, session persistence for JSONL + SQLite, tool path guards).
+- Add targeted unit tests for important logic (config parsing, session persistence for SQLite, tool path guards).
 - Add an integration smoke test for an important non-TUI provider/session path.
 - Improve error messages (actionable, short, contextual).
 

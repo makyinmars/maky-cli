@@ -20,10 +20,8 @@ Do not implement these yet:
 1. **Session becomes a first-class domain object**  
 Turns and metadata are persisted independently of UI lifecycle.
 
-2. **Pluggable persistence backend**  
-Session events use one domain schema with two storage options:
-- JSONL append log (simple debug/replay),
-- SQLite tables (durable indexed storage).
+2. **SQLite persistence backend**  
+Session events use one domain schema and persist to SQLite tables.
 
 3. **Resume path is explicit**  
 Startup can load latest session or selected session id.
@@ -31,8 +29,7 @@ Startup can load latest session or selected session id.
 ## Module Responsibilities (Phase 5)
 
 - `agent/session.rs`: in-memory session model and operations.
-- `storage/sessions.rs`: `SessionStore` trait + backend selector.
-- `storage/jsonl_sessions.rs`: JSONL append/load/replay implementation.
+- `storage/sessions.rs`: `SessionStore` trait.
 - `storage/sqlite_sessions.rs`: SQLite schema/init/append/load/replay implementation.
 - `app/controller.rs`: writes events and handles resume/new session commands.
 - `cli.rs` or arg parser: `--resume <id>` support.
@@ -46,8 +43,6 @@ Startup can load latest session or selected session id.
   - `load(session_id)`
   - `load_latest()`
 - config surface:
-  - `session_store = "jsonl" | "sqlite"` (default `jsonl`)
-  - `session_dir` for JSONL files
   - `session_db_path` for SQLite database file
 - command surface:
   - `/new`
@@ -56,17 +51,14 @@ Startup can load latest session or selected session id.
 ## Step-by-Step Build Plan (Checklist)
 
 - [ ] Step 1: Define session metadata and event schema.
-- [ ] Step 2: Define persistence schema for both backends:
-  - JSONL line format per event type,
+- [ ] Step 2: Define persistence schema for SQLite:
   - SQLite tables/indexes (`sessions`, `session_events`) with event ordering.
 - [ ] Step 3: Add append contract + durability strategy:
-  - JSONL flush/append behavior,
   - SQLite transaction boundary per append batch.
-- [ ] Step 4: Add replay contract to rebuild in-memory session state from either backend.
+- [ ] Step 4: Add replay contract to rebuild in-memory session state from SQLite.
 - [ ] Step 5: Add startup policy (`latest` by default, optional explicit resume).
 - [ ] Step 6: Add `/new` architecture path to create fresh session id.
 - [ ] Step 7: Define storage layout conventions:
-  - JSONL directory + file naming convention,
   - SQLite DB path and initialization behavior.
 - [ ] Step 8: Define corruption tolerance policy (skip bad line vs fail fast).
 - [ ] Step 9: Define UI indicators for active session id and restore status.
@@ -74,7 +66,7 @@ Startup can load latest session or selected session id.
 
 ## Phase 5 Done Criteria (Checklist)
 
-- [ ] Conversations persist to disk in the configured store (JSONL or SQLite).
+- [ ] Conversations persist to disk in SQLite.
 - [ ] Restarting app restores history from latest session.
 - [ ] `--resume <id>` behavior is defined and works in architecture.
 - [ ] `/new` starts a fresh session cleanly.
@@ -83,7 +75,6 @@ Startup can load latest session or selected session id.
 ## Rust Learning Focus
 
 - `serde` serialization/deserialization patterns.
-- File IO and append-safe writes.
 - Basic SQLite schema design and transaction usage.
 - Rebuild state by replaying immutable events.
 

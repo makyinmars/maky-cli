@@ -40,7 +40,7 @@ Use one resolved config object for provider/auth/tools/session settings.
   - `model`
   - `auth`
   - `openai`
-  - `session_dir`
+  - `session_db_path`
   - `approval_policy`
   - `ui`
 - `EffectiveConfig` output from layering pipeline.

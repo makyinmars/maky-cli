@@ -5,9 +5,13 @@ use std::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::app::state::LocalCommand;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppEvent {
     Key(KeyEvent),
+    Submit,
+    Command(LocalCommand),
     Tick,
     Resize(u16, u16),
     Quit,
@@ -36,6 +40,9 @@ impl EventSource {
                         if is_quit_key(&key) {
                             return Ok(AppEvent::Quit);
                         }
+                        if is_submit_key(&key) {
+                            return Ok(AppEvent::Submit);
+                        }
                         return Ok(AppEvent::Key(key));
                     }
                     Event::Resize(width, height) => return Ok(AppEvent::Resize(width, height)),
@@ -51,13 +58,13 @@ impl EventSource {
     }
 }
 
+pub fn is_submit_key(key: &KeyEvent) -> bool {
+    key.code == KeyCode::Enter
+}
+
 pub fn is_quit_key(key: &KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => true,
-        KeyCode::Char('q') | KeyCode::Char('Q') => {
-            !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT)
-        }
         KeyCode::Char('c') | KeyCode::Char('C') => key.modifiers.contains(KeyModifiers::CONTROL),
         _ => false,
     }
@@ -83,5 +90,23 @@ mod tests {
     fn ctrl_q_is_not_quit_key() {
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
         assert!(!is_quit_key(&key));
+    }
+
+    #[test]
+    fn plain_q_is_not_quit_key() {
+        let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(!is_quit_key(&key));
+    }
+
+    #[test]
+    fn uppercase_q_is_not_quit_key() {
+        let key = KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT);
+        assert!(!is_quit_key(&key));
+    }
+
+    #[test]
+    fn enter_is_submit_key() {
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(is_submit_key(&key));
     }
 }

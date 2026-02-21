@@ -38,17 +38,17 @@ Errors are concise for users and detailed in logs.
 - Prioritize tests only for important behavior and high-risk boundaries.
 - Unit tests:
   - config parsing/merge/validation
-  - session persistence serialization/replay for each backend (`jsonl`, `sqlite`)
+  - session persistence serialization/replay for SQLite
   - tool path guard logic
 - Integration smoke path:
-  - non-TUI provider/session flow at minimum (run once per session backend)
+  - non-TUI provider/session flow at minimum
 
 ## Step-by-Step Build Plan (Checklist)
 
 - [ ] Step 1: Define panic hook strategy with guaranteed terminal restore.
 - [ ] Step 2: Define shutdown cleanup order for active tasks and resources.
 - [ ] Step 3: Add unit test plan for config layering and invalid input cases.
-- [ ] Step 4: Add unit test plan for session persistence round-trip and replay for JSONL and SQLite.
+- [ ] Step 4: Add unit test plan for session persistence round-trip and replay for SQLite.
 - [ ] Step 5: Add unit test plan for workspace path guards and traversal attempts.
 - [ ] Step 6: Add integration smoke test plan for the most important provider-session path.
 - [ ] Step 7: Define error message style guide (short, actionable, contextual).
@@ -61,7 +61,7 @@ Errors are concise for users and detailed in logs.
 - [ ] Terminal state is restored on all tested crash/exit paths.
 - [ ] Important modules have unit tests for happy path + key failures.
 - [ ] At least one integration smoke path exists.
-- [ ] Session persistence tests cover all configured backends.
+- [ ] Session persistence tests cover the configured SQLite backend.
 - [ ] User-facing errors are readable and actionable.
 - [ ] Logs provide enough detail for debugging.
 

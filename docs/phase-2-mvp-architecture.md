@@ -11,6 +11,7 @@ Validate the chat interaction flow locally before adding provider/network comple
 ## Phase 2 Non-Goals
 
 Do not implement these yet:
+
 - OpenAI API calls,
 - OAuth login,
 - persistent sessions,
@@ -43,27 +44,27 @@ Use a fake/local responder to test flow and UI updates.
 
 ## Step-by-Step Build Plan (Checklist)
 
-- [ ] Step 1: Add state fields for chat messages and editable input text.
-- [ ] Step 2: Define message roles (`user`, `assistant`, `system`) for UI labeling.
-- [ ] Step 3: Add submit event handling (`Enter` behavior) in controller.
-- [ ] Step 4: Parse slash commands before normal message processing.
-- [ ] Step 5: Define `/help` behavior in architecture (status/message output path).
-- [ ] Step 6: Define `/quit` behavior to route to `Quit` event.
-- [ ] Step 7: Add local fake responder contract for assistant replies.
-- [ ] Step 8: Ensure user message append and assistant message append are separate steps.
-- [ ] Step 9: Define failure/status path for command parsing errors.
-- [ ] Step 10: Validate keyboard editing behavior (insert, backspace, cursor policy).
-- [ ] Step 11: Validate message-pane scrolling policy for growing history.
-- [ ] Step 12: Confirm clean exit semantics still hold after local chat flow is added.
+- [x] Step 1: Add state fields for chat messages and editable input text.
+- [x] Step 2: Define message roles (`user`, `assistant`, `system`) for UI labeling.
+- [x] Step 3: Add submit event handling (`Enter` behavior) in controller.
+- [x] Step 4: Parse slash commands before normal message processing.
+- [x] Step 5: Define `/help` behavior in architecture (status/message output path).
+- [x] Step 6: Define `/quit` behavior to route to `Quit` event.
+- [x] Step 7: Add local fake responder contract for assistant replies.
+- [x] Step 8: Ensure user message append and assistant message append are separate steps.
+- [x] Step 9: Define failure/status path for command parsing errors.
+- [x] Step 10: Validate keyboard editing behavior (insert, backspace, cursor policy).
+- [x] Step 11: Validate message-pane scrolling policy for growing history.
+- [x] Step 12: Confirm clean exit semantics still hold after local chat flow is added.
 
 ## Phase 2 Done Criteria (Checklist)
 
-- [ ] You can type and submit messages locally.
-- [ ] User messages appear in history.
-- [ ] Local assistant responses appear in history.
-- [ ] `/help` works.
-- [ ] `/quit` exits cleanly.
-- [ ] No network/provider dependencies are required for this phase.
+- [x] You can type and submit messages locally.
+- [x] User messages appear in history.
+- [x] Local assistant responses appear in history.
+- [x] `/help` works.
+- [x] `/quit` exits cleanly.
+- [x] No network/provider dependencies are required for this phase.
 
 ## Rust Learning Focus
 
@@ -74,5 +75,6 @@ Use a fake/local responder to test flow and UI updates.
 ## Handoff to Phase 3
 
 When Phase 2 is complete:
+
 - keep local turn flow as fallback/debug path,
 - add auth architecture in isolation before network streaming.
