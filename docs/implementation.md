@@ -17,7 +17,7 @@ MVP capabilities:
 - Terminal chat UI (Ratatui).
 - OAuth login with ChatGPT plans.
 - OpenAI Responses API streaming output.
-- Session save/resume (JSONL).
+- Session save/resume (JSONL or SQLite).
 - Minimal tool calls (`list_files`, `read_file`, `exec_command`) with approval.
 - Config via file/env/CLI overrides.
 
@@ -62,6 +62,8 @@ src/
   storage/
     mod.rs
     sessions.rs
+    jsonl_sessions.rs
+    sqlite_sessions.rs
     config.rs
   model/
     mod.rs
@@ -94,7 +96,7 @@ Design rule:
    - approval gate checks policy,
    - tool executes in bounded workspace context,
    - result fed back into the active turn.
-7. Session events append to JSONL continuously.
+7. Session events append continuously to the configured session store (`jsonl` or `sqlite`).
 8. On exit or panic, terminal restore runs.
 
 ## 4) Core Interfaces
@@ -152,10 +154,16 @@ Core types in `model/types.rs`:
 - `ProviderEvent` enum:
   - `TextDelta`, `ToolCallRequested`, `Completed`, `Error`.
 
-Session log format (JSONL):
-- one event per line (append-only),
-- safe for crash recovery,
-- easy to replay for resume.
+Session persistence backends:
+- `SessionStore` trait defines shared append/load/replay behavior.
+- JSONL backend:
+  - one event per line (append-only),
+  - safe for crash recovery,
+  - easy to inspect and replay.
+- SQLite backend:
+  - `sessions` table stores metadata,
+  - `session_events` table stores ordered event stream,
+  - transactions preserve event ordering and durability.
 
 ## 6) Config Layering
 
@@ -172,7 +180,9 @@ Essential config keys:
 - `auth.token_store = "keyring" | "file"`
 - `openai.base_url` (default official API)
 - `openai.api_key_env = "OPENAI_API_KEY"`
+- `session_store = "jsonl" | "sqlite"`
 - `session_dir`
+- `session_db_path` (used when `session_store = "sqlite"`)
 - `approval_policy` (`on-request` for MVP)
 - `ui.alt_screen` (bool)
 
@@ -233,6 +243,7 @@ Core MVP crates:
 - `keyring` - secure OAuth token storage in OS credential store.
 - `webbrowser` - open OAuth login URLs from terminal app.
 - `url` - callback URL parsing and validation.
+- `rusqlite` - SQLite-backed session store.
 
 Very useful additions:
 - `async-trait` - async trait methods (provider/tool interfaces).
@@ -293,7 +304,7 @@ Note:
 2. Add local fake chat loop.
 3. Add OAuth login (ChatGPT plans) with persisted token store.
 4. Add OpenAI streaming provider using OAuth token.
-5. Add session JSONL persistence.
+5. Add session persistence with pluggable JSONL/SQLite backends.
 6. Add tool registry and one read-only tool.
 7. Add `exec_command` with approvals.
 8. Add config layering and model/auth overrides.
