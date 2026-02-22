@@ -16,7 +16,12 @@ pub struct SessionRecord {
 }
 
 pub trait SessionStore: Send + Sync {
-    fn append_event(&self, session_id: &str, event: &SessionEvent) -> anyhow::Result<()>;
+    fn append_event(
+        &self,
+        session_id: &str,
+        model: &str,
+        event: &SessionEvent,
+    ) -> anyhow::Result<()>;
 
     fn load_session(&self, session_id: &str) -> anyhow::Result<Option<SessionRecord>>;
 }

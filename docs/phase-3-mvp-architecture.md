@@ -11,6 +11,7 @@ Add authentication architecture so users can sign in via OAuth and stay signed i
 ## Phase 3 Non-Goals
 
 Do not implement these yet:
+
 - full streaming provider integration,
 - tool execution,
 - advanced multi-provider auth UX.
@@ -37,37 +38,38 @@ src/auth/
 ```
 
 Responsibility split:
+
 - `provider.rs`: auth trait and contract types.
 - `oauth_chatgpt.rs`: OAuth flow-specific logic.
 - `token_store.rs`: secure persistence boundary.
 
 ## Core Data/Contract Shape
 
-- `AuthSession { access_token, refresh_token, expires_at, provider_id }`
+- `AuthSession { access_token, refresh_token, expires_at, provider_id, id_token?, account_id? }`
 - `AuthStatus` enum (`SignedOut | SignedIn | Expired | Refreshing`)
 - `AuthProvider` trait (`login`, `refresh_if_needed`)
 - `TokenStore` trait (`load`, `save`, `clear`)
 
 ## Step-by-Step Build Plan (Checklist)
 
-- [ ] Step 1: Define auth domain models and trait boundaries.
-- [ ] Step 2: Add startup credential resolution policy (OAuth first, API key fallback).
-- [ ] Step 3: Add token-store abstraction and keyring-first policy.
-- [ ] Step 4: Define file fallback policy and warning behavior when keyring is unavailable.
-- [ ] Step 5: Add `/login` command architecture path.
-- [ ] Step 6: Add `/auth` command architecture path for status inspection.
-- [ ] Step 7: Add `/logout` command architecture path for session removal.
-- [ ] Step 8: Define refresh-before-request behavior contract.
-- [ ] Step 9: Define auth failure surfaces (status line + logs).
-- [ ] Step 10: Validate restart behavior expectation (session persists across runs).
+- [x] Step 1: Define auth domain models and trait boundaries.
+- [x] Step 2: Add startup credential resolution policy (OAuth first, API key fallback).
+- [x] Step 3: Add token-store abstraction and keyring-first policy.
+- [x] Step 4: Define file fallback policy and warning behavior when keyring is unavailable.
+- [x] Step 5: Add `/login` command architecture path.
+- [x] Step 6: Add `/auth` command architecture path for status inspection.
+- [x] Step 7: Add `/logout` command architecture path for session removal.
+- [x] Step 8: Define refresh-before-request behavior contract.
+- [x] Step 9: Define auth failure surfaces (status line + logs).
+- [x] Step 10: Validate restart behavior expectation (session persists across runs).
 
 ## Phase 3 Done Criteria (Checklist)
 
-- [ ] OAuth login flow can be initiated from CLI/TUI commands.
-- [ ] Auth status can be queried.
-- [ ] Logout path is defined and clears active session data.
-- [ ] Session persistence strategy is defined.
-- [ ] Expired token refresh behavior is defined before model requests.
+- [x] OAuth login flow can be initiated from CLI/TUI commands.
+- [x] Auth status can be queried.
+- [x] Logout path is defined and clears active session data.
+- [x] Session persistence strategy is defined.
+- [x] Expired token refresh behavior is defined before model requests.
 
 ## Rust Learning Focus
 
@@ -78,5 +80,6 @@ Responsibility split:
 ## Handoff to Phase 4
 
 When Phase 3 is complete:
+
 - pass resolved credentials into provider layer,
 - keep auth independent from TUI rendering details.

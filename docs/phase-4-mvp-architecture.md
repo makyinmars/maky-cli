@@ -44,24 +44,24 @@ Running turns can be canceled cleanly from input.
 
 ## Step-by-Step Build Plan (Checklist)
 
-- [ ] Step 1: Define `ModelProvider` trait with streaming turn interface.
-- [ ] Step 2: Define provider request/response event types.
-- [ ] Step 3: Add OpenAI provider module boundary and config dependency points.
-- [ ] Step 4: Wire controller submit path to provider request creation.
-- [ ] Step 5: Route streaming deltas into active assistant message in state.
-- [ ] Step 6: Define completion event handling and turn finalization.
-- [ ] Step 7: Define cancel action routing and cancellation semantics.
-- [ ] Step 8: Define provider/network error surfaces for status line + logs.
-- [ ] Step 9: Preserve UI responsiveness while stream is active.
-- [ ] Step 10: Confirm auth/session dependency injection into provider requests.
+- [x] Step 1: Define `ModelProvider` trait with streaming turn interface.
+- [x] Step 2: Define provider request/response event types.
+- [x] Step 3: Add OpenAI provider module boundary and config dependency points.
+- [x] Step 4: Wire controller submit path to provider request creation.
+- [x] Step 5: Route streaming deltas into active assistant message in state.
+- [x] Step 6: Define completion event handling and turn finalization.
+- [x] Step 7: Define cancel action routing and cancellation semantics.
+- [x] Step 8: Define provider/network error surfaces for status line + logs.
+- [x] Step 9: Preserve UI responsiveness while stream is active.
+- [x] Step 10: Confirm auth/session dependency injection into provider requests.
 
 ## Phase 4 Done Criteria (Checklist)
 
-- [ ] A submitted prompt can produce streamed assistant text.
-- [ ] Streaming updates appear incrementally in the TUI.
-- [ ] Turn completion transitions state back to idle.
-- [ ] Cancel action stops an active turn cleanly.
-- [ ] Provider errors are visible to user and logged for debugging.
+- [x] A submitted prompt can produce streamed assistant text.
+- [x] Streaming updates appear incrementally in the TUI.
+- [x] Turn completion transitions state back to idle.
+- [x] Cancel action stops an active turn cleanly.
+- [x] Provider errors are visible to user and logged for debugging.
 
 ## Rust Learning Focus
 

@@ -43,5 +43,6 @@ pub enum ProviderEvent {
     TextDelta(String),
     ToolCallRequested(ToolCall),
     Completed,
+    Cancelled,
     Error(String),
 }

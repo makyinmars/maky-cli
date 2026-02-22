@@ -12,6 +12,9 @@ mod providers;
 mod storage;
 #[allow(dead_code)]
 mod tools;
+mod util;
+
+use std::{fs::OpenOptions, io};
 
 use anyhow::Result;
 use clap::Parser;
@@ -21,13 +24,37 @@ use tracing_subscriber::{EnvFilter, fmt};
 use crate::cli::Cli;
 
 fn init_tracing() {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = std::fs::create_dir_all(".maky");
 
-    fmt().with_env_filter(env_filter).with_target(false).init();
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(".maky/maky.log")
+    {
+        Ok(log_file) => {
+            fmt()
+                .with_env_filter(default_env_filter())
+                .with_target(false)
+                .with_ansi(false)
+                .with_writer(log_file)
+                .init();
+        }
+        Err(_) => {
+            // If file logging is unavailable, drop logs instead of corrupting the TUI.
+            fmt()
+                .with_env_filter(default_env_filter())
+                .with_target(false)
+                .with_writer(io::sink)
+                .init();
+        }
+    }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn default_env_filter() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+}
+
+fn main() -> Result<()> {
     init_tracing();
 
     let cli = Cli::parse();

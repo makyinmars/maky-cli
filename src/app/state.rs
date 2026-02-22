@@ -1,21 +1,14 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-}
+pub use crate::model::types::MessageRole;
+use crate::util::unix_timestamp_secs;
 
-impl MessageRole {
-    pub fn label(&self) -> &'static str {
-        match self {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-        }
-    }
-}
+pub const LOCAL_COMMANDS_INLINE: &str =
+    "/help, /login [browser|headless], /auth, /logout, /cancel, /quit";
+pub const LOCAL_COMMANDS_INLINE_NO_QUIT: &str =
+    "/help, /login [browser|headless], /auth, /logout, /cancel";
+pub const LOGIN_COMMAND_USAGE: &str = "/login [browser|headless]";
+pub const CANCEL_SHORTCUT_LABEL: &str = "Ctrl+X";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
@@ -37,7 +30,17 @@ impl ChatMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalCommand {
     Help,
+    Login(LoginCommandMode),
+    Auth,
+    Logout,
+    Cancel,
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginCommandMode {
+    Browser,
+    Headless,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +83,44 @@ pub fn parse_local_command(input: &str) -> Option<Result<LocalCommand, CommandPa
                 }))
             }
         }
+        "/login" => match args.as_str() {
+            "" | "browser" => Some(Ok(LocalCommand::Login(LoginCommandMode::Browser))),
+            "headless" => Some(Ok(LocalCommand::Login(LoginCommandMode::Headless))),
+            _ => Some(Err(CommandParseError::UnexpectedArguments {
+                command: "/login",
+                args,
+            })),
+        },
+        "/auth" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::Auth))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/auth",
+                    args,
+                }))
+            }
+        }
+        "/logout" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::Logout))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/logout",
+                    args,
+                }))
+            }
+        }
+        "/cancel" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::Cancel))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/cancel",
+                    args,
+                }))
+            }
+        }
         "/quit" => {
             if args.is_empty() {
                 Some(Ok(LocalCommand::Quit))
@@ -104,15 +145,23 @@ pub enum InputMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
     Idle,
-    HandlingLocalResponse,
+    Streaming,
+    Cancelling,
+    Cancelled,
 }
 
 impl TurnState {
     pub fn label(&self) -> &'static str {
         match self {
             TurnState::Idle => "idle",
-            TurnState::HandlingLocalResponse => "local-response",
+            TurnState::Streaming => "streaming",
+            TurnState::Cancelling => "cancelling",
+            TurnState::Cancelled => "cancelled",
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(self, TurnState::Streaming | TurnState::Cancelling)
     }
 }
 
@@ -204,9 +253,14 @@ impl InputState {
 pub struct AppState {
     pub running: bool,
     pub status_line: String,
+    pub model: String,
+    pub variant: String,
+    pub session_id: String,
     pub input_mode: InputMode,
     pub input: InputState,
     pub turn_state: TurnState,
+    pub active_turn_id: Option<String>,
+    pub active_assistant_message_index: Option<usize>,
     pub messages: Vec<ChatMessage>,
     pub last_tick: Instant,
 }
@@ -215,19 +269,25 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             running: true,
-            status_line: "Local mode active. Enter sends, /help shows commands, /quit exits."
-                .to_string(),
+            status_line: format!(
+                "Provider mode active. Enter sends. Commands: {LOCAL_COMMANDS_INLINE}."
+            ),
+            model: "openai/gpt-5.3-codex".to_string(),
+            variant: "medium".to_string(),
+            session_id: format!("session-{}", unix_timestamp_secs()),
             input_mode: InputMode::Editing,
             input: InputState::default(),
             turn_state: TurnState::Idle,
+            active_turn_id: None,
+            active_assistant_message_index: None,
             messages: vec![
                 ChatMessage::new(
                     MessageRole::System,
-                    "Phase 2 local chat loop is active. No network/provider calls are made.",
+                    "Phase 4 streaming architecture is active. Use /login to authenticate before submitting prompts.",
                 ),
                 ChatMessage::new(
                     MessageRole::Assistant,
-                    "Try typing a message, then Enter. Use /help for local commands.",
+                    "Try typing a prompt, then press Enter. Use /cancel to stop an active stream.",
                 ),
             ],
             last_tick: Instant::now(),
@@ -245,20 +305,89 @@ impl AppState {
         self.status_line = status.into();
     }
 
+    pub fn set_model_and_variant(&mut self, model: impl Into<String>, variant: impl Into<String>) {
+        self.model = model.into();
+        self.variant = variant.into();
+    }
+
+    pub fn set_session_id(&mut self, session_id: impl Into<String>) {
+        self.session_id = session_id.into();
+    }
+
     pub fn push_message(&mut self, role: MessageRole, text: impl Into<String>) {
         self.messages.push(ChatMessage::new(role, text));
+    }
+
+    pub fn begin_streaming_turn(&mut self, turn_id: impl Into<String>) {
+        self.turn_state = TurnState::Streaming;
+        self.active_turn_id = Some(turn_id.into());
+        self.messages
+            .push(ChatMessage::new(MessageRole::Assistant, String::new()));
+        self.active_assistant_message_index = Some(self.messages.len() - 1);
+    }
+
+    pub fn has_active_turn(&self) -> bool {
+        self.active_turn_id.is_some()
+    }
+
+    pub fn append_assistant_delta(&mut self, delta: &str) -> bool {
+        let Some(message_index) = self.active_assistant_message_index else {
+            return false;
+        };
+
+        if let Some(message) = self.messages.get_mut(message_index) {
+            message.text.push_str(delta);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn mark_turn_cancelling(&mut self) -> bool {
+        if !self.has_active_turn() {
+            return false;
+        }
+
+        self.turn_state = TurnState::Cancelling;
+        true
+    }
+
+    pub fn complete_active_turn(&mut self) -> Option<String> {
+        let turn_id = self.active_turn_id.take();
+        self.active_assistant_message_index = None;
+        self.turn_state = TurnState::Idle;
+        turn_id
+    }
+
+    pub fn cancel_active_turn(&mut self) -> Option<String> {
+        let turn_id = self.active_turn_id.take();
+        self.active_assistant_message_index = None;
+        self.turn_state = TurnState::Cancelled;
+        self.drop_empty_active_assistant_message();
+        turn_id
+    }
+
+    pub fn fail_active_turn(&mut self) -> Option<String> {
+        let turn_id = self.active_turn_id.take();
+        self.active_assistant_message_index = None;
+        self.turn_state = TurnState::Idle;
+        self.drop_empty_active_assistant_message();
+        turn_id
+    }
+
+    fn drop_empty_active_assistant_message(&mut self) {
+        let Some(last_message) = self.messages.last() else {
+            return;
+        };
+
+        if last_message.role == MessageRole::Assistant && last_message.text.trim().is_empty() {
+            self.messages.pop();
+        }
     }
 
     pub fn touch_tick(&mut self) {
         self.last_tick = Instant::now();
     }
-}
-
-fn unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -268,6 +397,27 @@ mod tests {
     #[test]
     fn parses_known_local_command() {
         assert_eq!(parse_local_command("/help"), Some(Ok(LocalCommand::Help)));
+        assert_eq!(
+            parse_local_command("/login"),
+            Some(Ok(LocalCommand::Login(LoginCommandMode::Browser)))
+        );
+        assert_eq!(
+            parse_local_command("/login browser"),
+            Some(Ok(LocalCommand::Login(LoginCommandMode::Browser)))
+        );
+        assert_eq!(
+            parse_local_command("/login headless"),
+            Some(Ok(LocalCommand::Login(LoginCommandMode::Headless)))
+        );
+        assert_eq!(parse_local_command("/auth"), Some(Ok(LocalCommand::Auth)));
+        assert_eq!(
+            parse_local_command("/logout"),
+            Some(Ok(LocalCommand::Logout))
+        );
+        assert_eq!(
+            parse_local_command("/cancel"),
+            Some(Ok(LocalCommand::Cancel))
+        );
     }
 
     #[test]

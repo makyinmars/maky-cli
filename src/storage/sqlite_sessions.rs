@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -10,9 +9,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::{
     model::types::SessionMeta,
     storage::sessions::{SessionEvent, SessionRecord, SessionStore},
+    util::ensure_parent_dir_exists,
 };
 
-const DEFAULT_MODEL: &str = "local-phase2";
+const UNKNOWN_MODEL: &str = "unknown";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqliteSessionStore {
@@ -47,18 +47,30 @@ impl SqliteSessionStore {
 }
 
 impl SessionStore for SqliteSessionStore {
-    fn append_event(&self, session_id: &str, event: &SessionEvent) -> anyhow::Result<()> {
+    fn append_event(
+        &self,
+        session_id: &str,
+        model: &str,
+        event: &SessionEvent,
+    ) -> anyhow::Result<()> {
         let mut connection = self.open_connection()?;
         let tx = connection
             .transaction()
             .context("failed to begin sqlite transaction")?;
 
         let now = unix_timestamp_seconds_i64();
+        let normalized_model = if model.trim().is_empty() {
+            UNKNOWN_MODEL
+        } else {
+            model.trim()
+        };
         tx.execute(
             "INSERT INTO sessions (session_id, created_at, updated_at, model)
              VALUES (?1, ?2, ?2, ?3)
-             ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at",
-            params![session_id, now, DEFAULT_MODEL],
+             ON CONFLICT(session_id) DO UPDATE
+                 SET updated_at = excluded.updated_at,
+                     model = excluded.model",
+            params![session_id, now, normalized_model],
         )
         .with_context(|| format!("failed to upsert session metadata for {session_id}"))?;
 
@@ -169,18 +181,6 @@ fn initialize_schema(connection: &Connection) -> anyhow::Result<()> {
         .context("failed to initialize sqlite schema")
 }
 
-fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create parent directory {}", parent.display())
-            })?;
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
 fn unix_timestamp_seconds_i64() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -226,10 +226,10 @@ mod tests {
         let status_event = SessionEvent::Status("done".to_string());
 
         store
-            .append_event(session_id, &message_event)
+            .append_event(session_id, "openai/gpt-5.3-codex", &message_event)
             .expect("message append should succeed");
         store
-            .append_event(session_id, &status_event)
+            .append_event(session_id, "openai/gpt-5.3-codex", &status_event)
             .expect("status append should succeed");
 
         let record = store
@@ -238,6 +238,7 @@ mod tests {
             .expect("record should exist");
 
         assert_eq!(record.meta.session_id, session_id);
+        assert_eq!(record.meta.model, "openai/gpt-5.3-codex");
         assert_eq!(record.events, vec![message_event, status_event]);
         assert!(record.meta.updated_at >= record.meta.created_at);
     }

@@ -29,7 +29,7 @@ pub fn run() -> Result<()> {
     let mut terminal = Terminal::new(backend).context("failed to create terminal backend")?;
     terminal.clear().context("failed to clear terminal")?;
 
-    let mut controller = AppController::new();
+    let mut controller = AppController::new().context("failed to initialize app controller")?;
     let run_result = controller.run(&mut terminal);
 
     let _ = terminal.show_cursor();

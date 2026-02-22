@@ -5,13 +5,15 @@ use std::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::app::state::LocalCommand;
+use crate::{app::state::LocalCommand, model::types::ProviderEvent};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
     Key(KeyEvent),
     Submit,
     Command(LocalCommand),
+    Provider(ProviderEvent),
+    CancelActiveTurn,
     Tick,
     Resize(u16, u16),
     Quit,
@@ -39,6 +41,9 @@ impl EventSource {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         if is_quit_key(&key) {
                             return Ok(AppEvent::Quit);
+                        }
+                        if is_cancel_key(&key) {
+                            return Ok(AppEvent::CancelActiveTurn);
                         }
                         if is_submit_key(&key) {
                             return Ok(AppEvent::Submit);
@@ -68,6 +73,11 @@ pub fn is_quit_key(key: &KeyEvent) -> bool {
         KeyCode::Char('c') | KeyCode::Char('C') => key.modifiers.contains(KeyModifiers::CONTROL),
         _ => false,
     }
+}
+
+pub fn is_cancel_key(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 #[cfg(test)]
@@ -108,5 +118,17 @@ mod tests {
     fn enter_is_submit_key() {
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(is_submit_key(&key));
+    }
+
+    #[test]
+    fn ctrl_x_is_cancel_key() {
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert!(is_cancel_key(&key));
+    }
+
+    #[test]
+    fn plain_x_is_not_cancel_key() {
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(!is_cancel_key(&key));
     }
 }
