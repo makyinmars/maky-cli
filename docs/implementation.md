@@ -16,7 +16,7 @@ Preferred package references:
 MVP capabilities:
 - Terminal chat UI (Ratatui).
 - OAuth login with ChatGPT plans.
-- OpenAI Responses API streaming output.
+- OpenAI Codex backend API streaming output.
 - Session save/resume (SQLite).
 - Minimal tool calls (`list_files`, `read_file`, `exec_command`) with approval.
 - Config via file/env/CLI overrides.
@@ -173,7 +173,7 @@ Essential config keys:
 - `model = "..."` (do not hardcode permanently)
 - `auth.mode = "oauth" | "api_key"`
 - `auth.token_store = "keyring" | "file"`
-- `openai.base_url` (default official API)
+- `openai.base_url` (default `https://chatgpt.com/backend-api/codex/responses`; use `mock://...` for offline tests)
 - `openai.api_key_env = "OPENAI_API_KEY"`
 - `session_db_path`
 - `approval_policy` (`on-request` for MVP)
@@ -183,7 +183,7 @@ Essential config keys:
 
 MVP auth behavior:
 - Primary path: OAuth login for ChatGPT plans.
-- Fallback path: `OPENAI_API_KEY` for local/dev setups.
+- Live Codex requests require OAuth sessions (`/login`).
 - Add commands:
   - `/login`
   - `/auth`

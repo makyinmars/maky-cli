@@ -64,7 +64,9 @@ impl AppController {
 
     #[cfg(test)]
     pub fn new_for_tests() -> Self {
-        Self::new_with_auth_and_config(AuthRuntime::for_tests(), AppConfig::default())
+        let mut config = AppConfig::default();
+        config.openai.base_url = "mock://openai".to_string();
+        Self::new_with_auth_and_config(AuthRuntime::for_tests(), config)
     }
 
     fn new_with_auth_and_config(auth: AuthRuntime, config: AppConfig) -> Self {
@@ -87,12 +89,17 @@ impl AppController {
         }
 
         let provider = build_provider(&config);
+        let provider_endpoint = if config.openai.base_url.starts_with("mock://") {
+            config.openai.base_url.clone()
+        } else {
+            "https://chatgpt.com/backend-api/codex/responses".to_string()
+        };
         state.push_message(
             MessageRole::System,
             format!(
-                "Provider bootstrap: {} (base-url: {})",
+                "Provider bootstrap: {} (endpoint: {})",
                 provider.id(),
-                config.openai.base_url
+                provider_endpoint
             ),
         );
 
@@ -366,6 +373,7 @@ impl AppController {
             source: self.auth.source().label().to_string(),
             status: self.auth.status().label().to_string(),
             provider_id: self.auth.provider_id().to_string(),
+            account_id: self.auth.account_id_for_request(),
         };
 
         ProviderTurnRequest {

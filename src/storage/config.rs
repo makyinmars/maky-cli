@@ -34,7 +34,7 @@ impl Default for AppConfig {
                 token_store: "keyring".to_string(),
             },
             openai: OpenAiConfig {
-                base_url: "https://api.openai.com/v1".to_string(),
+                base_url: "https://chatgpt.com/backend-api/codex/responses".to_string(),
                 api_key_env: "OPENAI_API_KEY".to_string(),
                 variant: "medium".to_string(),
             },
@@ -83,7 +83,7 @@ impl AppConfig {
 fn normalize_openai_variant(value: &str) -> Option<String> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
-        "low" | "medium" | "high" | "xhigh" => Some(normalized),
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" => Some(normalized),
         _ => None,
     }
 }
@@ -103,6 +103,11 @@ mod tests {
 
     #[test]
     fn normalizes_supported_openai_variants() {
+        assert_eq!(normalize_openai_variant("none"), Some("none".to_string()));
+        assert_eq!(
+            normalize_openai_variant("Minimal"),
+            Some("minimal".to_string())
+        );
         assert_eq!(normalize_openai_variant("low"), Some("low".to_string()));
         assert_eq!(
             normalize_openai_variant("Medium"),

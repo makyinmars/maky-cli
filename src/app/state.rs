@@ -283,7 +283,7 @@ impl Default for AppState {
             messages: vec![
                 ChatMessage::new(
                     MessageRole::System,
-                    "Phase 4 streaming architecture is active. Use /login to authenticate before submitting prompts.",
+                    "Phase 4 streaming architecture is active. Use /auth to inspect session status; run /login only when signed out.",
                 ),
                 ChatMessage::new(
                     MessageRole::Assistant,

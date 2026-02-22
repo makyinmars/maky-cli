@@ -14,6 +14,7 @@ pub struct ProviderAuthContext {
     pub source: String,
     pub status: String,
     pub provider_id: String,
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

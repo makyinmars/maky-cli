@@ -11,6 +11,7 @@ Replace local fake assistant responses with real streaming model output.
 ## Phase 4 Non-Goals
 
 Do not implement these yet:
+
 - tool execution loop,
 - advanced multi-provider routing,
 - long-term session storage optimizations.
@@ -72,5 +73,13 @@ Running turns can be canceled cleanly from input.
 ## Handoff to Phase 5
 
 When Phase 4 is complete:
+
 - preserve provider event contracts,
 - add persistence around turns/events without changing UI contracts.
+
+## Implementation Notes
+
+- `providers/openai_responses.rs` now performs a real SSE request to the fixed Codex endpoint: `https://chatgpt.com/backend-api/codex/responses`.
+- OAuth sessions are required for the live Codex path; non-OAuth credentials surface a provider error that directs users to run `/login`.
+- `ChatGPT-Account-Id` is attached when available from OAuth session claims.
+- Tests and offline controller flows use `mock://openai` to keep deterministic streaming behavior without network access.

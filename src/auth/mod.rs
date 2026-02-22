@@ -167,6 +167,13 @@ impl AuthRuntime {
         }
     }
 
+    pub fn account_id_for_request(&self) -> Option<String> {
+        match &self.credential {
+            ResolvedCredential::OAuth(session) => session.account_id.clone(),
+            _ => None,
+        }
+    }
+
     pub fn snapshot(&self) -> AuthSnapshot {
         AuthSnapshot {
             status: self.status(),
@@ -323,10 +330,10 @@ impl AuthRuntime {
             }
         }
 
-        if token_file_preflight_failed
-            && !matches!(self.token_store_backend, ActiveTokenStoreBackend::Keyring)
-        {
-            return Ok(None);
+        if token_file_preflight_failed {
+            if matches!(self.token_store_backend, ActiveTokenStoreBackend::FileOnly) {
+                return Ok(None);
+            }
         }
 
         match self.token_store.load(provider_id) {
@@ -447,7 +454,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::auth::token_store::{FileTokenStore, InMemoryTokenStore, StoredToken, TokenStore};
+    use crate::auth::token_store::{ActiveTokenStoreBackend, FileTokenStore, InMemoryTokenStore, StoredToken, TokenStore};
 
     fn oauth_token(provider_id: &str, expires_at_unix_secs: Option<u64>) -> StoredToken {
         StoredToken {
@@ -502,6 +509,33 @@ mod tests {
         let mut runtime = runtime_with_store_and_file_bootstrap(
             Box::new(InMemoryTokenStore::default()),
             token_file_path,
+        );
+
+        runtime
+            .resolve_startup_credentials_with_api_key(None)
+            .expect("startup resolution should work");
+
+        assert_eq!(runtime.source(), CredentialSource::OAuthSession);
+    }
+
+    #[test]
+    fn file_fallback_store_used_when_token_file_preflight_errors() {
+        let temp_dir = tempdir().expect("temp dir should be created");
+        let token_file_path = temp_dir.path().to_path_buf();
+
+        let store = InMemoryTokenStore::default();
+        store
+            .save(&oauth_token("chatgpt-oauth", Some(u64::MAX)))
+            .expect("in-memory store should accept token");
+
+        let mut runtime = AuthRuntime::from_parts(
+            Box::new(MockAuthProvider),
+            Box::new(store),
+            ActiveTokenStoreBackend::FileFallback,
+            None,
+            token_file_path,
+            true,
+            "__MAKY_TEST_API_KEY__".to_string(),
         );
 
         runtime
