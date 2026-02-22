@@ -1,12 +1,11 @@
 use std::time::Instant;
 
 pub use crate::model::types::MessageRole;
+use crate::model::types::ToolCall;
 use crate::util::{new_session_id, unix_timestamp_secs};
 
-pub const LOCAL_COMMANDS_INLINE: &str =
-    "/help, /login [browser|headless], /auth, /logout, /new, /cancel, /quit";
-pub const LOCAL_COMMANDS_INLINE_NO_QUIT: &str =
-    "/help, /login [browser|headless], /auth, /logout, /new, /cancel";
+pub const LOCAL_COMMANDS_INLINE: &str = "/help, /login [browser|headless], /auth, /logout, /new, /resume <id>, /cancel, /approve, /deny, /quit";
+pub const LOCAL_COMMANDS_INLINE_NO_QUIT: &str = "/help, /login [browser|headless], /auth, /logout, /new, /resume <id>, /cancel, /approve, /deny";
 pub const LOGIN_COMMAND_USAGE: &str = "/login [browser|headless]";
 pub const CANCEL_SHORTCUT_LABEL: &str = "Ctrl+X";
 pub const SESSION_STATE_FRESH: &str = "fresh";
@@ -29,14 +28,17 @@ impl ChatMessage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalCommand {
     Help,
     Login(LoginCommandMode),
     Auth,
     Logout,
     New,
+    Resume(String),
     Cancel,
+    Approve,
+    Deny,
     Quit,
 }
 
@@ -49,7 +51,14 @@ pub enum LoginCommandMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandParseError {
     UnknownCommand(String),
-    UnexpectedArguments { command: &'static str, args: String },
+    MissingArguments {
+        command: &'static str,
+        usage: &'static str,
+    },
+    UnexpectedArguments {
+        command: &'static str,
+        args: String,
+    },
 }
 
 impl std::fmt::Display for CommandParseError {
@@ -57,6 +66,9 @@ impl std::fmt::Display for CommandParseError {
         match self {
             CommandParseError::UnknownCommand(command) => {
                 write!(f, "Unknown command `{command}`. Try /help.")
+            }
+            CommandParseError::MissingArguments { command, usage } => {
+                write!(f, "Command `{command}` requires arguments. Usage: {usage}")
             }
             CommandParseError::UnexpectedArguments { command, args } => {
                 write!(f, "Command `{command}` does not accept arguments: {args}")
@@ -124,12 +136,42 @@ pub fn parse_local_command(input: &str) -> Option<Result<LocalCommand, CommandPa
                 }))
             }
         }
+        "/resume" => {
+            if args.is_empty() {
+                Some(Err(CommandParseError::MissingArguments {
+                    command: "/resume",
+                    usage: "/resume <id>",
+                }))
+            } else {
+                Some(Ok(LocalCommand::Resume(args)))
+            }
+        }
         "/cancel" => {
             if args.is_empty() {
                 Some(Ok(LocalCommand::Cancel))
             } else {
                 Some(Err(CommandParseError::UnexpectedArguments {
                     command: "/cancel",
+                    args,
+                }))
+            }
+        }
+        "/approve" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::Approve))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/approve",
+                    args,
+                }))
+            }
+        }
+        "/deny" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::Deny))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/deny",
                     args,
                 }))
             }
@@ -275,6 +317,7 @@ pub struct AppState {
     pub turn_state: TurnState,
     pub active_turn_id: Option<String>,
     pub active_assistant_message_index: Option<usize>,
+    pub pending_tool_call: Option<ToolCall>,
     pub messages: Vec<ChatMessage>,
     pub history_scroll: usize,
     pub history_total_lines: usize,
@@ -298,6 +341,7 @@ impl Default for AppState {
             turn_state: TurnState::Idle,
             active_turn_id: None,
             active_assistant_message_index: None,
+            pending_tool_call: None,
             messages: Self::default_messages(),
             history_scroll: usize::MAX,
             history_total_lines: 0,
@@ -316,7 +360,7 @@ impl AppState {
             ),
             ChatMessage::new(
                 MessageRole::Assistant,
-                "Try typing a prompt, then press Enter. Use /new to reset the session, or /cancel to stop an active stream.",
+                "Try typing a prompt, then press Enter. Use /new for a fresh session, /resume <id> to restore one, or /cancel to stop an active stream.",
             ),
         ]
     }
@@ -422,12 +466,14 @@ impl AppState {
         self.active_assistant_message_index = None;
         self.input = InputState::default();
         self.messages = Self::default_messages();
+        self.pending_tool_call = None;
         self.reset_history_scroll();
         self.last_tick = Instant::now();
     }
 
     pub fn begin_streaming_turn(&mut self, turn_id: impl Into<String>) {
         self.turn_state = TurnState::Streaming;
+        self.pending_tool_call = None;
         self.active_turn_id = Some(turn_id.into());
         self.messages
             .push(ChatMessage::new(MessageRole::Assistant, String::new()));
@@ -514,6 +560,19 @@ impl AppState {
         }
         self.history_scroll = self.history_scroll.min(max_scroll);
     }
+
+    pub fn set_pending_tool_call(&mut self, call: ToolCall) {
+        self.pending_tool_call = Some(call);
+    }
+
+    #[cfg(test)]
+    pub fn has_pending_tool_call(&self) -> bool {
+        self.pending_tool_call.is_some()
+    }
+
+    pub fn take_pending_tool_call(&mut self) -> Option<ToolCall> {
+        self.pending_tool_call.take()
+    }
 }
 
 #[cfg(test)]
@@ -542,9 +601,30 @@ mod tests {
         );
         assert_eq!(parse_local_command("/new"), Some(Ok(LocalCommand::New)));
         assert_eq!(
+            parse_local_command("/resume session-123"),
+            Some(Ok(LocalCommand::Resume("session-123".to_string())))
+        );
+        assert_eq!(
             parse_local_command("/cancel"),
             Some(Ok(LocalCommand::Cancel))
         );
+        assert_eq!(
+            parse_local_command("/approve"),
+            Some(Ok(LocalCommand::Approve))
+        );
+        assert_eq!(parse_local_command("/deny"), Some(Ok(LocalCommand::Deny)));
+    }
+
+    #[test]
+    fn resume_command_requires_session_id() {
+        let result = parse_local_command("/resume").expect("slash command should be parsed");
+        assert!(matches!(
+            result,
+            Err(CommandParseError::MissingArguments {
+                command: "/resume",
+                usage: "/resume <id>"
+            })
+        ));
     }
 
     #[test]

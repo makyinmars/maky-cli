@@ -1,10 +1,19 @@
-use crate::model::types::{Message, ProviderEvent, SessionMeta, ToolResult};
+use crate::model::types::{
+    ApprovalDecision, ApprovalRequest, Message, ProviderEvent, SessionMeta, ToolResult,
+};
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApprovalEvent {
+    pub request: ApprovalRequest,
+    pub decision: ApprovalDecision,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SessionEvent {
     Message(Message),
     Provider(ProviderEvent),
+    Approval(ApprovalEvent),
     ToolResult(ToolResult),
     Status(String),
 }

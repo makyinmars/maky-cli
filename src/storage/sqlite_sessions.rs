@@ -229,6 +229,7 @@ fn session_event_type(event: &SessionEvent) -> &'static str {
     match event {
         SessionEvent::Message(_) => "message",
         SessionEvent::Provider(_) => "provider",
+        SessionEvent::Approval(_) => "approval",
         SessionEvent::ToolResult(_) => "tool_result",
         SessionEvent::Status(_) => "status",
     }

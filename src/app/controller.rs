@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::mpsc::{Receiver, TryRecvError},
     time::Duration,
 };
@@ -19,16 +20,20 @@ use crate::{
         ui,
     },
     auth::{AuthRuntime, provider::AuthLoginMethod},
-    model::types::{Message as ProviderMessage, ProviderEvent},
+    model::types::{
+        ApprovalDecision, ApprovalRequest, Message as ProviderMessage, ProviderEvent, RiskLevel,
+        ToolCall, ToolResult,
+    },
     providers::{
         openai_responses::OpenAiResponsesProvider,
         provider::{ModelProvider, ProviderAuthContext, ProviderTurnRequest, TurnHandle},
     },
     storage::{
         config::AppConfig,
-        sessions::{SessionEvent, SessionRecord, SessionStore},
+        sessions::{ApprovalEvent, SessionEvent, SessionRecord, SessionStore},
         sqlite_sessions::SqliteSessionStore,
     },
+    tools::{ApprovalPolicy, ToolContext, registry::ToolRegistry},
     util::{block_on_future, new_session_id},
 };
 
@@ -36,7 +41,7 @@ use super::StartupOptions;
 
 fn local_help_message() -> String {
     format!(
-        "Local commands:\n/help - show this help\n{LOGIN_COMMAND_USAGE} - start OAuth login\n/auth - show auth status\n/logout - clear persisted OAuth session\n/new - start a fresh session\n/cancel - cancel the active provider turn\n/quit - exit the app\nShortcut: {CANCEL_SHORTCUT_LABEL} also cancels an active turn."
+        "Local commands:\n/help - show this help\n{LOGIN_COMMAND_USAGE} - start OAuth login\n/auth - show auth status\n/logout - clear persisted OAuth session\n/new - start a fresh session\n/resume <id> - restore a persisted session by id\n/approve - allow the pending tool request once\n/deny - deny the pending tool request\n/cancel - cancel the active provider turn\n/quit - exit the app\nShortcut: {CANCEL_SHORTCUT_LABEL} also cancels an active turn."
     )
 }
 
@@ -57,6 +62,9 @@ pub struct AppController {
     auth: AuthRuntime,
     provider: Box<dyn ModelProvider>,
     session_store: Box<dyn SessionStore>,
+    tool_registry: ToolRegistry,
+    tool_context: ToolContext,
+    approval_policy: ApprovalPolicy,
     active_provider_turn: Option<ActiveProviderTurn>,
     turn_sequence: u64,
 }
@@ -136,12 +144,24 @@ impl AppController {
             ),
         );
 
+        let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let approval_policy = ApprovalPolicy::from_config(&config.approval_policy);
+        let tool_context = ToolContext {
+            workspace_root,
+            approval_required: false,
+            approval_granted: false,
+            max_output_chars: 8_000,
+        };
+
         let mut controller = Self {
             state,
             events: EventSource::new(Duration::from_millis(100)),
             auth,
             provider,
             session_store,
+            tool_registry: ToolRegistry::with_defaults(),
+            tool_context,
+            approval_policy,
             active_provider_turn: None,
             turn_sequence: 0,
         };
@@ -297,6 +317,11 @@ impl AppController {
             LocalCommand::Auth => self.handle_auth_command(),
             LocalCommand::Logout => self.handle_logout_command(),
             LocalCommand::New => self.handle_new_session_command(),
+            LocalCommand::Resume(session_id) => self.handle_resume_session_command(session_id),
+            LocalCommand::Approve => {
+                self.handle_tool_approval_decision(ApprovalDecision::AllowOnce)
+            }
+            LocalCommand::Deny => self.handle_tool_approval_decision(ApprovalDecision::Deny),
             LocalCommand::Cancel => self.handle_cancel_turn_request(),
             LocalCommand::Quit => {
                 self.state
@@ -393,6 +418,28 @@ impl AppController {
         self.append_session_event(SessionEvent::Status(format!(
             "Session created via /new (previous session: {previous_session_id})"
         )));
+    }
+
+    fn handle_resume_session_command(&mut self, requested_session_id: String) {
+        if self.state.turn_state.is_active() {
+            self.state
+                .set_status("Finish or cancel the active provider turn before running /resume.");
+            return;
+        }
+
+        let previous_session_id = self.state.session_id.clone();
+        let resumed = self.try_restore_requested_session(&requested_session_id);
+        if resumed {
+            self.state.push_message(
+                MessageRole::System,
+                format!(
+                    "Resumed requested session `{requested_session_id}` from /resume. Previous session: {previous_session_id}."
+                ),
+            );
+            self.state.set_status(format!(
+                "Resumed session {requested_session_id}. Enter sends, /new starts fresh."
+            ));
+        }
     }
 
     fn handle_cancel_turn_request(&mut self) {
@@ -551,22 +598,164 @@ impl AppController {
                     .set_status("Provider error. See logs and system messages.");
             }
             ProviderEvent::ToolCallRequested(tool_call) => {
-                warn!(
-                    provider = self.provider.id(),
-                    tool_name = tool_call.name,
-                    "tool call requested before tool loop is implemented"
-                );
+                self.handle_tool_call_requested(tool_call);
+            }
+        }
+    }
+
+    fn handle_tool_call_requested(&mut self, tool_call: ToolCall) {
+        let approval_request = self.build_approval_request(&tool_call);
+        let requires_approval = self.should_require_approval(&approval_request);
+
+        if requires_approval {
+            self.state.set_pending_tool_call(tool_call.clone());
+            self.state.push_message(
+                MessageRole::System,
+                format!(
+                    "Pending approval for `{}` (risk: {}). Use /approve or /deny.",
+                    approval_request.tool_name,
+                    approval_request.risk_level.label()
+                ),
+            );
+            self.state.set_status(format!(
+                "Pending approval for tool `{}`. Run /approve or /deny.",
+                approval_request.tool_name
+            ));
+            return;
+        }
+
+        self.execute_tool_call(tool_call, false);
+    }
+
+    fn handle_tool_approval_decision(&mut self, decision: ApprovalDecision) {
+        let Some(tool_call) = self.state.take_pending_tool_call() else {
+            self.state
+                .set_status("No pending tool request. Wait for a tool call first.");
+            return;
+        };
+
+        let approval_request = self.build_approval_request(&tool_call);
+        self.append_session_event(SessionEvent::Approval(ApprovalEvent {
+            request: approval_request.clone(),
+            decision,
+        }));
+
+        match decision {
+            ApprovalDecision::AllowOnce => {
                 self.state.push_message(
                     MessageRole::System,
                     format!(
-                        "Tool call requested (`{}`) but tool execution is not enabled in Phase 4.",
-                        tool_call.name
+                        "Approved tool `{}` once. Executing now.",
+                        approval_request.tool_name
                     ),
                 );
+                self.execute_tool_call(tool_call, true);
+            }
+            ApprovalDecision::Deny => {
+                let denial_output = format!(
+                    "Denied tool `{}` by user decision.",
+                    approval_request.tool_name
+                );
+                let result = ToolResult {
+                    call_id: tool_call.id,
+                    output: denial_output.clone(),
+                    error: Some("denied by user".to_string()),
+                    truncated: false,
+                    success: false,
+                };
+                self.append_session_event(SessionEvent::ToolResult(result));
+                self.state.push_message(MessageRole::Tool, denial_output);
                 self.state
-                    .set_status("Tool call requested, but tools are not enabled in this phase.");
+                    .set_status("Denied pending tool call. No command was executed.");
             }
         }
+    }
+
+    fn execute_tool_call(&mut self, tool_call: ToolCall, approval_granted: bool) {
+        let Some(handler) = self.tool_registry.resolve(&tool_call.name) else {
+            let result = ToolResult {
+                call_id: tool_call.id,
+                output: format!("Unknown tool `{}`", tool_call.name),
+                error: Some("unknown tool".to_string()),
+                truncated: false,
+                success: false,
+            };
+            self.append_session_event(SessionEvent::ToolResult(result.clone()));
+            self.state.push_message(
+                MessageRole::System,
+                format!("Tool `{}` is not registered.", tool_call.name),
+            );
+            self.state
+                .set_status("Tool execution failed: requested tool is not registered.");
+            return;
+        };
+
+        let mut context = self.tool_context.clone();
+        context.approval_required = self.is_risky_tool(&tool_call.name);
+        context.approval_granted = approval_granted;
+
+        let execution = block_on_future(handler.execute(tool_call.clone(), &context));
+        let result = match execution {
+            Ok(result) => result,
+            Err(error) => ToolResult {
+                call_id: tool_call.id,
+                output: format!("Tool execution failed: {error}"),
+                error: Some(error.to_string()),
+                truncated: false,
+                success: false,
+            },
+        };
+
+        let rendered_output = if let Some(error) = &result.error {
+            format!(
+                "Tool `{}` {}. Error: {error}\n{}",
+                tool_call.name,
+                if result.success {
+                    "completed"
+                } else {
+                    "failed"
+                },
+                result.output
+            )
+        } else {
+            format!("Tool `{}` output:\n{}", tool_call.name, result.output)
+        };
+
+        self.append_session_event(SessionEvent::ToolResult(result.clone()));
+        self.state.push_message(MessageRole::Tool, rendered_output);
+        self.state.set_status(if result.success {
+            format!("Tool `{}` completed.", tool_call.name)
+        } else {
+            format!("Tool `{}` failed.", tool_call.name)
+        });
+    }
+
+    fn build_approval_request(&self, tool_call: &ToolCall) -> ApprovalRequest {
+        ApprovalRequest {
+            tool_name: tool_call.name.clone(),
+            summary: format!(
+                "Execute `{}` with {} arg(s)",
+                tool_call.name,
+                tool_call.args.len()
+            ),
+            risk_level: if self.is_risky_tool(&tool_call.name) {
+                RiskLevel::High
+            } else {
+                RiskLevel::Low
+            },
+        }
+    }
+
+    fn should_require_approval(&self, request: &ApprovalRequest) -> bool {
+        match self.approval_policy {
+            ApprovalPolicy::AlwaysAsk => true,
+            ApprovalPolicy::OnRequest => request.risk_level == RiskLevel::High,
+            ApprovalPolicy::Never => false,
+        }
+    }
+
+    fn is_risky_tool(&self, tool_name: &str) -> bool {
+        tool_name == "exec_command"
     }
 
     fn drain_provider_events(&mut self) -> bool {
@@ -627,41 +816,14 @@ impl AppController {
         }
 
         if let Some(requested_session_id) = startup.resume_session_id {
-            match self.session_store.load_session(&requested_session_id) {
-                Ok(Some(record)) => {
-                    self.restore_from_record(record);
-                    self.state.push_message(
-                        MessageRole::System,
-                        format!("Resumed requested session `{requested_session_id}`."),
-                    );
-                    self.state.set_status(format!(
-                        "Resumed session {requested_session_id}. Enter sends, /new starts fresh."
-                    ));
-                }
-                Ok(None) => {
-                    self.state.set_session_id(new_session_id());
-                    self.state.set_session_state(SESSION_STATE_FRESH);
-                    self.state.push_message(
-                        MessageRole::System,
-                        format!(
-                            "Requested session `{requested_session_id}` was not found. Started a fresh session."
-                        ),
-                    );
-                    self.state.set_status(format!(
-                        "Session `{requested_session_id}` not found. Started a fresh session."
-                    ));
-                }
-                Err(error) => {
-                    warn!(?error, "failed to load requested resume session");
-                    self.state.set_session_id(new_session_id());
-                    self.state.set_session_state(SESSION_STATE_FRESH);
-                    self.state.push_message(
-                        MessageRole::System,
-                        "Session resume failed. Started a fresh session.",
-                    );
-                    self.state
-                        .set_status("Session resume failed. Started a fresh session.");
-                }
+            if self.try_restore_requested_session(&requested_session_id) {
+                self.state.push_message(
+                    MessageRole::System,
+                    format!("Resumed requested session `{requested_session_id}`."),
+                );
+                self.state.set_status(format!(
+                    "Resumed session {requested_session_id}. Enter sends, /new starts fresh."
+                ));
             }
             return;
         }
@@ -696,6 +858,41 @@ impl AppController {
         }
     }
 
+    fn try_restore_requested_session(&mut self, requested_session_id: &str) -> bool {
+        match self.session_store.load_session(requested_session_id) {
+            Ok(Some(record)) => {
+                self.restore_from_record(record);
+                true
+            }
+            Ok(None) => {
+                self.state.set_session_id(new_session_id());
+                self.state.set_session_state(SESSION_STATE_FRESH);
+                self.state.push_message(
+                    MessageRole::System,
+                    format!(
+                        "Requested session `{requested_session_id}` was not found. Started a fresh session."
+                    ),
+                );
+                self.state.set_status(format!(
+                    "Session `{requested_session_id}` not found. Started a fresh session."
+                ));
+                false
+            }
+            Err(error) => {
+                warn!(?error, "failed to load requested resume session");
+                self.state.set_session_id(new_session_id());
+                self.state.set_session_state(SESSION_STATE_FRESH);
+                self.state.push_message(
+                    MessageRole::System,
+                    "Session resume failed. Started a fresh session.",
+                );
+                self.state
+                    .set_status("Session resume failed. Started a fresh session.");
+                false
+            }
+        }
+    }
+
     fn restore_from_record(&mut self, record: SessionRecord) {
         self.state.set_session_id(record.meta.session_id.clone());
         self.state.set_session_state(SESSION_STATE_RESTORED);
@@ -707,17 +904,43 @@ impl AppController {
         self.state.turn_state = TurnState::Idle;
         self.state.active_turn_id = None;
         self.state.active_assistant_message_index = None;
+        self.state.pending_tool_call = None;
         self.state.input = Default::default();
         self.state.reset_history_scroll();
         self.state.messages.clear();
 
         for event in record.events {
-            if let SessionEvent::Message(message) = event {
-                self.state.messages.push(crate::app::state::ChatMessage {
-                    role: message.role,
-                    text: message.content,
-                    timestamp: message.timestamp,
-                });
+            match event {
+                SessionEvent::Message(message) => {
+                    self.state.messages.push(crate::app::state::ChatMessage {
+                        role: message.role,
+                        text: message.content,
+                        timestamp: message.timestamp,
+                    });
+                }
+                SessionEvent::ToolResult(result) => {
+                    let body = if let Some(error) = result.error {
+                        format!("tool error: {error}\n{}", result.output)
+                    } else {
+                        result.output
+                    };
+                    self.state.messages.push(crate::app::state::ChatMessage {
+                        role: MessageRole::Tool,
+                        text: body,
+                        timestamp: crate::util::unix_timestamp_secs(),
+                    });
+                }
+                SessionEvent::Approval(approval) => {
+                    self.state.messages.push(crate::app::state::ChatMessage {
+                        role: MessageRole::System,
+                        text: format!(
+                            "Approval decision for `{}`: {:?}",
+                            approval.request.tool_name, approval.decision
+                        ),
+                        timestamp: crate::util::unix_timestamp_secs(),
+                    });
+                }
+                SessionEvent::Provider(_) | SessionEvent::Status(_) => {}
             }
         }
 
@@ -1548,6 +1771,47 @@ mod tests {
     }
 
     #[test]
+    fn resume_command_restores_requested_session() {
+        let (_dir, store) = temp_store();
+        let resumable_event = SessionEvent::Message(ProviderMessage {
+            id: "resume-cmd-user".to_string(),
+            role: MessageRole::User,
+            content: "resume command should restore this".to_string(),
+            timestamp: 1_735_000_003,
+        });
+
+        store
+            .append_event(
+                "session-resume-command",
+                "openai/gpt-5.3-codex",
+                &resumable_event,
+            )
+            .expect("append should succeed");
+
+        let mut controller = AppController::new_for_tests_with_store(
+            Box::new(store),
+            StartupOptions {
+                force_new_session: true,
+                ..StartupOptions::default()
+            },
+        );
+
+        controller.state.input.text = "/resume session-resume-command".to_string();
+        controller.state.input.cursor = controller.state.input.text.len();
+        controller.handle_event(AppEvent::Submit);
+
+        assert_eq!(controller.state.session_id, "session-resume-command");
+        assert_eq!(controller.state.session_state, SESSION_STATE_RESTORED);
+        assert!(
+            controller
+                .state
+                .messages
+                .iter()
+                .any(|message| message.text.contains("resume command should restore this"))
+        );
+    }
+
+    #[test]
     fn provider_pipeline_persists_messages_and_stream_events() {
         let (_dir, store) = temp_store();
         let mut controller = AppController::new_for_tests_with_store(
@@ -1590,5 +1854,125 @@ mod tests {
                 if message.role == MessageRole::Assistant
                     && message.content.contains("OpenAI streaming provider active")
         )));
+    }
+
+    #[test]
+    fn tool_call_request_executes_read_file_without_approval_when_low_risk() {
+        let (_dir, store) = temp_store();
+        let work_dir = tempdir().expect("tempdir should be created");
+        let note_path = work_dir.path().join("note.txt");
+        fs::write(
+            &note_path,
+            "phase 6 tool output
+",
+        )
+        .expect("note file should be written");
+
+        let mut controller = AppController::new_for_tests_with_store(
+            Box::new(store),
+            StartupOptions {
+                force_new_session: true,
+                ..StartupOptions::default()
+            },
+        );
+        controller.tool_context.workspace_root = work_dir.path().to_path_buf();
+        let initial_len = controller.state.messages.len();
+
+        let call = ToolCall {
+            id: "tool-read-001".to_string(),
+            name: "read_file".to_string(),
+            args: vec![r#"{\"path\": \"note.txt\"}"#.to_string()],
+        };
+
+        controller.handle_tool_call_requested(call.clone());
+
+        assert_eq!(controller.state.messages.len(), initial_len + 1);
+        assert_eq!(
+            controller
+                .state
+                .messages
+                .last()
+                .expect("tool message should exist")
+                .role,
+            MessageRole::Tool
+        );
+        assert!(
+            controller
+                .state
+                .messages
+                .last()
+                .expect("tool message should exist")
+                .text
+                .contains("phase 6 tool output"),
+            "tool output should be shown in chat"
+        );
+
+        let session_record = controller
+            .session_store
+            .load_session(&controller.state.session_id)
+            .expect("session load should succeed")
+            .expect("session record should exist");
+        assert!(session_record.events.iter().any(
+            |event| matches!(event, SessionEvent::ToolResult(result) if result.call_id == call.id)
+        ));
+    }
+
+    #[test]
+    fn tool_call_request_honors_approval_flow_for_exec_command() {
+        let (_dir, store) = temp_store();
+        let mut controller = AppController::new_for_tests_with_store(
+            Box::new(store),
+            StartupOptions {
+                force_new_session: true,
+                ..StartupOptions::default()
+            },
+        );
+        controller.approval_policy = ApprovalPolicy::AlwaysAsk;
+
+        let call = ToolCall {
+            id: "tool-exec-001".to_string(),
+            name: "exec_command".to_string(),
+            args: vec![r#"{\"command\": \"echo approval-required\"}"#.to_string()],
+        };
+
+        controller.handle_tool_call_requested(call.clone());
+
+        assert!(controller.state.has_pending_tool_call());
+        let pending_text = controller
+            .state
+            .messages
+            .last()
+            .expect("status message should exist")
+            .text
+            .clone();
+        assert!(pending_text.contains("Pending approval"));
+
+        controller.handle_tool_approval_decision(ApprovalDecision::Deny);
+        assert!(!controller.state.has_pending_tool_call());
+        let denial = controller
+            .state
+            .messages
+            .last()
+            .expect("tool denial message should exist")
+            .text
+            .clone();
+        assert!(denial.contains("Denied tool `exec_command`"));
+
+        controller.handle_tool_call_requested(call.clone());
+        assert!(controller.state.has_pending_tool_call());
+        controller.handle_tool_approval_decision(ApprovalDecision::AllowOnce);
+
+        assert!(!controller.state.has_pending_tool_call());
+        let output_message = controller
+            .state
+            .messages
+            .last()
+            .expect("tool output message should exist")
+            .text
+            .clone();
+        assert!(
+            output_message.contains("Tool `exec_command`") && output_message.contains("output"),
+            "tool output should be rendered for approved execution"
+        );
     }
 }

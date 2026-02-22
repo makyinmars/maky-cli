@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::tools::ToolHandler;
+use crate::tools::{ToolHandler, exec::ExecCommandTool, ls::ListFilesTool, read::ReadFileTool};
 
 #[derive(Default)]
 pub struct ToolRegistry {
@@ -26,5 +26,13 @@ impl ToolRegistry {
 
     pub fn names(&self) -> Vec<&str> {
         self.handlers.keys().map(String::as_str).collect()
+    }
+
+    pub fn with_defaults() -> Self {
+        let mut registry = Self::new();
+        registry.register(ListFilesTool);
+        registry.register(ReadFileTool);
+        registry.register(ExecCommandTool);
+        registry
     }
 }
