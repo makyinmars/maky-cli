@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
+use tracing::warn;
 
 use crate::{
     model::types::SessionMeta,
@@ -130,7 +131,7 @@ impl SessionStore for SqliteSessionStore {
 
         let mut statement = connection
             .prepare(
-                "SELECT payload_json
+                "SELECT sequence, event_type, payload_json
                  FROM session_events
                  WHERE session_id = ?1
                  ORDER BY sequence ASC",
@@ -143,14 +144,45 @@ impl SessionStore for SqliteSessionStore {
 
         let mut events = Vec::new();
         while let Some(row) = rows.next().context("failed to iterate session events")? {
-            let payload_json: String = row.get(0).context("failed to read event payload")?;
-            let event = serde_json::from_str::<SessionEvent>(&payload_json).with_context(|| {
-                format!("failed to deserialize event payload for session {session_id}")
-            })?;
-            events.push(event);
+            let sequence: i64 = row.get(0).context("failed to read event sequence")?;
+            let event_type: String = row.get(1).context("failed to read event type")?;
+            let payload_json: String = row.get(2).context("failed to read event payload")?;
+            match serde_json::from_str::<SessionEvent>(&payload_json) {
+                Ok(event) => events.push(event),
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        session_id,
+                        sequence,
+                        event_type,
+                        "skipping corrupted session event row while loading replay state"
+                    );
+                }
+            }
         }
 
         Ok(Some(SessionRecord { meta, events }))
+    }
+
+    fn load_latest(&self) -> anyhow::Result<Option<SessionRecord>> {
+        let connection = self.open_connection()?;
+
+        let latest_session_id: Option<String> = connection
+            .query_row(
+                "SELECT session_id
+                 FROM sessions
+                 ORDER BY updated_at DESC, session_id DESC
+                 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to load latest session id")?;
+
+        match latest_session_id {
+            Some(session_id) => self.load_session(&session_id),
+            None => Ok(None),
+        }
     }
 }
 
@@ -204,6 +236,8 @@ fn session_event_type(event: &SessionEvent) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::params;
+    use std::{thread, time::Duration};
     use tempfile::tempdir;
 
     use crate::model::types::{Message, MessageRole};
@@ -254,5 +288,77 @@ mod tests {
             .expect("load should succeed");
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_latest_returns_most_recent_session() {
+        let dir = tempdir().expect("tempdir should be created");
+        let db_path = dir.path().join("sessions.db");
+        let store = SqliteSessionStore::new(&db_path);
+
+        let older_session = "session-older";
+        let newer_session = "session-newer";
+        let message_event = SessionEvent::Message(Message {
+            id: "msg-1".to_string(),
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            timestamp: 1_735_000_000,
+        });
+
+        store
+            .append_event(older_session, "openai/gpt-5.3-codex", &message_event)
+            .expect("older append should succeed");
+        thread::sleep(Duration::from_secs(1));
+        store
+            .append_event(newer_session, "openai/gpt-5.3-codex", &message_event)
+            .expect("newer append should succeed");
+
+        let record = store
+            .load_latest()
+            .expect("latest load should succeed")
+            .expect("latest record should exist");
+
+        assert_eq!(record.meta.session_id, newer_session);
+    }
+
+    #[test]
+    fn load_latest_returns_none_when_store_is_empty() {
+        let dir = tempdir().expect("tempdir should be created");
+        let db_path = dir.path().join("sessions.db");
+        let store = SqliteSessionStore::new(&db_path);
+
+        let latest = store.load_latest().expect("latest load should succeed");
+
+        assert!(latest.is_none());
+    }
+
+    #[test]
+    fn load_session_skips_corrupted_rows() {
+        let dir = tempdir().expect("tempdir should be created");
+        let db_path = dir.path().join("sessions.db");
+        let store = SqliteSessionStore::new(&db_path);
+        let session_id = "session-corrupted";
+
+        let valid_event = SessionEvent::Status("ok".to_string());
+        store
+            .append_event(session_id, "openai/gpt-5.3-codex", &valid_event)
+            .expect("append should succeed");
+
+        let connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute(
+                "UPDATE session_events
+                 SET payload_json = ?1
+                 WHERE session_id = ?2",
+                params!["{ not valid json", session_id],
+            )
+            .expect("corrupting payload should succeed");
+
+        let record = store
+            .load_session(session_id)
+            .expect("load should succeed")
+            .expect("session should exist");
+
+        assert!(record.events.is_empty());
     }
 }

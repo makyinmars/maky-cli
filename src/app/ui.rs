@@ -6,11 +6,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::app::state::{
-    AppState, CANCEL_SHORTCUT_LABEL, ChatMessage, InputMode, LOCAL_COMMANDS_INLINE, MessageRole,
+use crate::app::{
+    markdown::render_markdown_lines,
+    state::{
+        AppState, CANCEL_SHORTCUT_LABEL, ChatMessage, InputMode, LOCAL_COMMANDS_INLINE, MessageRole,
+    },
 };
 
-pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
+pub fn draw(frame: &mut Frame<'_>, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -35,12 +38,17 @@ pub fn draw(frame: &mut Frame<'_>, state: &AppState) {
     frame.render_widget(header, chunks[0]);
 
     let history_lines = build_history_lines(&state.messages);
-
+    let history_content_width = chunks[1].width.saturating_sub(2);
+    let total_history_rows = total_wrapped_history_rows(&history_lines, history_content_width);
     let visible_history_rows = chunks[1].height.saturating_sub(2) as usize;
-    let history_scroll = history_lines.len().saturating_sub(visible_history_rows) as u16;
+    state.set_history_layout(total_history_rows, visible_history_rows);
+    let history_scroll = state.effective_history_scroll();
+    let history_scroll = u16::try_from(history_scroll).unwrap_or(u16::MAX);
+    let history_title =
+        "History (Wheel/Up/Down scroll, PgUp/PgDn page, Ctrl+Home top, Ctrl+End follow)";
 
     let history = Paragraph::new(history_lines)
-        .block(Block::default().borders(Borders::ALL).title("History"))
+        .block(Block::default().borders(Borders::ALL).title(history_title))
         .scroll((history_scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(history, chunks[1]);
@@ -93,6 +101,25 @@ fn build_model_variant_line(state: &AppState) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(state.variant.clone(), Style::default().fg(Color::Cyan)),
+        Span::raw(" | "),
+        Span::styled(
+            "session: ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(state.session_id.clone(), Style::default().fg(Color::Green)),
+        Span::raw(" | "),
+        Span::styled(
+            "state: ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            state.session_state.clone(),
+            Style::default().fg(Color::Yellow),
+        ),
     ])
 }
 
@@ -116,12 +143,55 @@ fn build_history_lines(messages: &[ChatMessage]) -> Vec<Line<'static>> {
     lines
 }
 
+fn total_wrapped_history_rows(lines: &[Line<'static>], content_width: u16) -> usize {
+    if content_width == 0 {
+        return lines.len();
+    }
+
+    let width = usize::from(content_width);
+    lines
+        .iter()
+        .map(|line| {
+            let row_width = line
+                .spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>();
+            let row_width = row_width.max(1);
+            row_width.div_ceil(width)
+        })
+        .sum()
+}
+
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &ChatMessage) {
     let prefix = role_prefix(message.role);
     let continuation = " ".repeat(prefix.chars().count());
     let role_style = role_prefix_style(message.role);
     let body_style = role_body_style(message.role);
 
+    if message.role == MessageRole::Assistant {
+        append_assistant_markdown_lines(
+            lines,
+            message,
+            prefix,
+            continuation,
+            role_style,
+            body_style,
+        );
+        return;
+    }
+
+    append_plain_message_lines(lines, message, prefix, continuation, role_style, body_style);
+}
+
+fn append_plain_message_lines(
+    lines: &mut Vec<Line<'static>>,
+    message: &ChatMessage,
+    prefix: String,
+    continuation: String,
+    role_style: Style,
+    body_style: Style,
+) {
     let mut message_lines = message.text.lines();
     if let Some(first_line) = message_lines.next() {
         lines.push(Line::from(vec![
@@ -137,6 +207,34 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &ChatMessage) {
         }
     } else {
         lines.push(Line::from(Span::styled(prefix, role_style)));
+    }
+}
+
+fn append_assistant_markdown_lines(
+    lines: &mut Vec<Line<'static>>,
+    message: &ChatMessage,
+    prefix: String,
+    continuation: String,
+    role_style: Style,
+    body_style: Style,
+) {
+    let rendered_lines = render_markdown_lines(&message.text, body_style);
+    if rendered_lines.is_empty() {
+        lines.push(Line::from(Span::styled(prefix, role_style)));
+        return;
+    }
+
+    let mut rendered_iter = rendered_lines.into_iter();
+    if let Some(first_line) = rendered_iter.next() {
+        let mut first_spans = vec![Span::styled(prefix.clone(), role_style)];
+        first_spans.extend(first_line.spans);
+        lines.push(Line::from(first_spans));
+    }
+
+    for line in rendered_iter {
+        let mut spans = vec![Span::raw(continuation.clone())];
+        spans.extend(line.spans);
+        lines.push(Line::from(spans));
     }
 }
 
@@ -214,10 +312,28 @@ mod tests {
     }
 
     #[test]
+    fn history_lines_render_assistant_markdown_lists_and_code_fences() {
+        let messages = vec![ChatMessage {
+            role: MessageRole::Assistant,
+            text: "- item one\n- item two\n\n```rust\nlet value = 42;\n```".to_string(),
+            timestamp: 1,
+        }];
+
+        let lines = build_history_lines(&messages);
+
+        assert_eq!(line_text(&lines[0]), ". - item one");
+        assert_eq!(line_text(&lines[1]), "  - item two");
+        assert_eq!(line_text(&lines[2]), "  ");
+        assert_eq!(line_text(&lines[3]), "      let value = 42;");
+    }
+
+    #[test]
     fn model_variant_line_shows_current_selection() {
         let state = AppState {
             model: "openai/gpt-5.3-codex".to_string(),
             variant: "xhigh".to_string(),
+            session_id: "session-123".to_string(),
+            session_state: "restored".to_string(),
             ..AppState::default()
         };
 
@@ -225,8 +341,19 @@ mod tests {
 
         assert_eq!(
             line_text(&line),
-            "model: openai/gpt-5.3-codex | variant: xhigh"
+            "model: openai/gpt-5.3-codex | variant: xhigh | session: session-123 | state: restored"
         );
+    }
+
+    #[test]
+    fn total_wrapped_history_rows_counts_wrapped_content() {
+        let lines = vec![Line::from("this is a long wrapped line")];
+
+        let wrapped_rows = total_wrapped_history_rows(&lines, 8);
+        let unwrapped_rows = total_wrapped_history_rows(&lines, 80);
+
+        assert!(wrapped_rows > unwrapped_rows);
+        assert_eq!(unwrapped_rows, 1);
     }
 
     fn line_text(line: &Line<'_>) -> String {

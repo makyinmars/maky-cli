@@ -330,10 +330,10 @@ impl AuthRuntime {
             }
         }
 
-        if token_file_preflight_failed {
-            if matches!(self.token_store_backend, ActiveTokenStoreBackend::FileOnly) {
-                return Ok(None);
-            }
+        if token_file_preflight_failed
+            && matches!(self.token_store_backend, ActiveTokenStoreBackend::FileOnly)
+        {
+            return Ok(None);
         }
 
         match self.token_store.load(provider_id) {
@@ -454,7 +454,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::auth::token_store::{ActiveTokenStoreBackend, FileTokenStore, InMemoryTokenStore, StoredToken, TokenStore};
+    use crate::auth::token_store::{
+        ActiveTokenStoreBackend, FileTokenStore, InMemoryTokenStore, StoredToken, TokenStore,
+    };
 
     fn oauth_token(provider_id: &str, expires_at_unix_secs: Option<u64>) -> StoredToken {
         StoredToken {

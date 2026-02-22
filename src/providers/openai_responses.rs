@@ -627,7 +627,10 @@ mod tests {
             payload.pointer("/instructions").and_then(Value::as_str),
             Some(OpenAiResponsesProvider::DEFAULT_INSTRUCTIONS)
         );
-        assert_eq!(payload.pointer("/store").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            payload.pointer("/store").and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

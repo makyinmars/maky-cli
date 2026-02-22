@@ -55,6 +55,7 @@ Running turns can be canceled cleanly from input.
 - [x] Step 8: Define provider/network error surfaces for status line + logs.
 - [x] Step 9: Preserve UI responsiveness while stream is active.
 - [x] Step 10: Confirm auth/session dependency injection into provider requests.
+- [x] Step 11: Add Markdown rendering for assistant output (`pulldown-cmark` parser + custom `ratatui` renderer adapter).
 
 ## Phase 4 Done Criteria (Checklist)
 
@@ -63,6 +64,7 @@ Running turns can be canceled cleanly from input.
 - [x] Turn completion transitions state back to idle.
 - [x] Cancel action stops an active turn cleanly.
 - [x] Provider errors are visible to user and logged for debugging.
+- [x] Streamed Markdown content (lists, code fences, emphasis) is rendered readably in the TUI.
 
 ## Rust Learning Focus
 
@@ -83,3 +85,4 @@ When Phase 4 is complete:
 - OAuth sessions are required for the live Codex path; non-OAuth credentials surface a provider error that directs users to run `/login`.
 - `ChatGPT-Account-Id` is attached when available from OAuth session claims.
 - Tests and offline controller flows use `mock://openai` to keep deterministic streaming behavior without network access.
+- Recommended Markdown approach (matching Codex-style architecture): use `pulldown-cmark` for parsing and keep formatting decisions in a small `app/` renderer layer that outputs `ratatui::text::Line` values.

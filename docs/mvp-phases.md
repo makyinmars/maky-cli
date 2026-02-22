@@ -93,6 +93,9 @@ Tasks:
 - Define `ModelProvider` trait and `OpenAIResponsesProvider`.
 - Read access token from OAuth session, with `OPENAI_API_KEY` fallback.
 - Implement streaming assistant output into active message.
+- Add Markdown rendering pipeline for assistant output:
+  - parse with `pulldown-cmark`,
+  - render into terminal lines with a small `ratatui` renderer adapter.
 - Surface API/network errors in a user-visible status line.
 
 Done when:

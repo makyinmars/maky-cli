@@ -50,27 +50,27 @@ Startup can load latest session or selected session id.
 
 ## Step-by-Step Build Plan (Checklist)
 
-- [ ] Step 1: Define session metadata and event schema.
-- [ ] Step 2: Define persistence schema for SQLite:
+- [x] Step 1: Define session metadata and event schema.
+- [x] Step 2: Define persistence schema for SQLite:
   - SQLite tables/indexes (`sessions`, `session_events`) with event ordering.
-- [ ] Step 3: Add append contract + durability strategy:
+- [x] Step 3: Add append contract + durability strategy:
   - SQLite transaction boundary per append batch.
-- [ ] Step 4: Add replay contract to rebuild in-memory session state from SQLite.
-- [ ] Step 5: Add startup policy (`latest` by default, optional explicit resume).
-- [ ] Step 6: Add `/new` architecture path to create fresh session id.
-- [ ] Step 7: Define storage layout conventions:
+- [x] Step 4: Add replay contract to rebuild in-memory session state from SQLite.
+- [x] Step 5: Add startup policy (`latest` by default, optional explicit resume).
+- [x] Step 6: Add `/new` architecture path to create fresh session id.
+- [x] Step 7: Define storage layout conventions:
   - SQLite DB path and initialization behavior.
-- [ ] Step 8: Define corruption tolerance policy (skip bad line vs fail fast).
-- [ ] Step 9: Define UI indicators for active session id and restore status.
-- [ ] Step 10: Verify provider turn pipeline writes events continuously.
+- [x] Step 8: Define corruption tolerance policy (skip bad line vs fail fast).
+- [x] Step 9: Define UI indicators for active session id and restore status.
+- [x] Step 10: Verify provider turn pipeline writes events continuously.
 
 ## Phase 5 Done Criteria (Checklist)
 
-- [ ] Conversations persist to disk in SQLite.
-- [ ] Restarting app restores history from latest session.
-- [ ] `--resume <id>` behavior is defined and works in architecture.
-- [ ] `/new` starts a fresh session cleanly.
-- [ ] Session ids are stable and unique.
+- [x] Conversations persist to disk in SQLite.
+- [x] Restarting app restores history from latest session.
+- [x] `--resume <id>` behavior is defined and works in architecture.
+- [x] `/new` starts a fresh session cleanly.
+- [x] Session ids are stable and unique.
 
 ## Rust Learning Focus
 

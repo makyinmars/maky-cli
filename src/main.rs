@@ -60,5 +60,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     debug!(?cli, "parsed cli arguments");
 
-    app::run()
+    app::run(app::StartupOptions {
+        resume_session_id: cli.resume,
+        force_new_session: cli.new_session,
+    })
 }

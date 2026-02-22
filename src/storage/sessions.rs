@@ -24,4 +24,6 @@ pub trait SessionStore: Send + Sync {
     ) -> anyhow::Result<()>;
 
     fn load_session(&self, session_id: &str) -> anyhow::Result<Option<SessionRecord>>;
+
+    fn load_latest(&self) -> anyhow::Result<Option<SessionRecord>>;
 }

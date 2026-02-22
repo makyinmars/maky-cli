@@ -8,12 +8,17 @@ use std::{
 };
 
 use anyhow::Context as AnyhowContext;
+use rand::random;
 
 pub fn unix_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+pub fn new_session_id() -> String {
+    format!("session-{}-{:08x}", unix_timestamp_secs(), random::<u32>())
 }
 
 pub fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {

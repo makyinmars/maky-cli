@@ -1,14 +1,16 @@
 use std::time::Instant;
 
 pub use crate::model::types::MessageRole;
-use crate::util::unix_timestamp_secs;
+use crate::util::{new_session_id, unix_timestamp_secs};
 
 pub const LOCAL_COMMANDS_INLINE: &str =
-    "/help, /login [browser|headless], /auth, /logout, /cancel, /quit";
+    "/help, /login [browser|headless], /auth, /logout, /new, /cancel, /quit";
 pub const LOCAL_COMMANDS_INLINE_NO_QUIT: &str =
-    "/help, /login [browser|headless], /auth, /logout, /cancel";
+    "/help, /login [browser|headless], /auth, /logout, /new, /cancel";
 pub const LOGIN_COMMAND_USAGE: &str = "/login [browser|headless]";
 pub const CANCEL_SHORTCUT_LABEL: &str = "Ctrl+X";
+pub const SESSION_STATE_FRESH: &str = "fresh";
+pub const SESSION_STATE_RESTORED: &str = "restored";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
@@ -33,6 +35,7 @@ pub enum LocalCommand {
     Login(LoginCommandMode),
     Auth,
     Logout,
+    New,
     Cancel,
     Quit,
 }
@@ -107,6 +110,16 @@ pub fn parse_local_command(input: &str) -> Option<Result<LocalCommand, CommandPa
             } else {
                 Some(Err(CommandParseError::UnexpectedArguments {
                     command: "/logout",
+                    args,
+                }))
+            }
+        }
+        "/new" => {
+            if args.is_empty() {
+                Some(Ok(LocalCommand::New))
+            } else {
+                Some(Err(CommandParseError::UnexpectedArguments {
+                    command: "/new",
                     args,
                 }))
             }
@@ -256,12 +269,16 @@ pub struct AppState {
     pub model: String,
     pub variant: String,
     pub session_id: String,
+    pub session_state: String,
     pub input_mode: InputMode,
     pub input: InputState,
     pub turn_state: TurnState,
     pub active_turn_id: Option<String>,
     pub active_assistant_message_index: Option<usize>,
     pub messages: Vec<ChatMessage>,
+    pub history_scroll: usize,
+    pub history_total_lines: usize,
+    pub history_visible_rows: usize,
     pub last_tick: Instant,
 }
 
@@ -274,28 +291,36 @@ impl Default for AppState {
             ),
             model: "openai/gpt-5.3-codex".to_string(),
             variant: "medium".to_string(),
-            session_id: format!("session-{}", unix_timestamp_secs()),
+            session_id: new_session_id(),
+            session_state: SESSION_STATE_FRESH.to_string(),
             input_mode: InputMode::Editing,
             input: InputState::default(),
             turn_state: TurnState::Idle,
             active_turn_id: None,
             active_assistant_message_index: None,
-            messages: vec![
-                ChatMessage::new(
-                    MessageRole::System,
-                    "Phase 4 streaming architecture is active. Use /auth to inspect session status; run /login only when signed out.",
-                ),
-                ChatMessage::new(
-                    MessageRole::Assistant,
-                    "Try typing a prompt, then press Enter. Use /cancel to stop an active stream.",
-                ),
-            ],
+            messages: Self::default_messages(),
+            history_scroll: usize::MAX,
+            history_total_lines: 0,
+            history_visible_rows: 0,
             last_tick: Instant::now(),
         }
     }
 }
 
 impl AppState {
+    pub fn default_messages() -> Vec<ChatMessage> {
+        vec![
+            ChatMessage::new(
+                MessageRole::System,
+                "Phase 5 session architecture is active. Use /auth to inspect session status; run /login only when signed out.",
+            ),
+            ChatMessage::new(
+                MessageRole::Assistant,
+                "Try typing a prompt, then press Enter. Use /new to reset the session, or /cancel to stop an active stream.",
+            ),
+        ]
+    }
+
     pub fn request_quit(&mut self) {
         self.running = false;
         self.status_line = "Shutting down...".to_string();
@@ -314,8 +339,91 @@ impl AppState {
         self.session_id = session_id.into();
     }
 
+    pub fn set_session_state(&mut self, session_state: impl Into<String>) {
+        self.session_state = session_state.into();
+    }
+
     pub fn push_message(&mut self, role: MessageRole, text: impl Into<String>) {
+        let follow_bottom = self.is_history_scrolled_to_bottom();
         self.messages.push(ChatMessage::new(role, text));
+        if follow_bottom {
+            self.scroll_history_bottom();
+        }
+    }
+
+    pub fn set_history_layout(&mut self, total_lines: usize, visible_rows: usize) {
+        self.history_total_lines = total_lines;
+        self.history_visible_rows = visible_rows;
+        self.normalize_history_scroll();
+    }
+
+    pub fn effective_history_scroll(&self) -> usize {
+        let max_scroll = self.max_history_scroll();
+        if self.history_scroll == usize::MAX {
+            max_scroll
+        } else {
+            self.history_scroll.min(max_scroll)
+        }
+    }
+
+    pub fn scroll_history_up(&mut self, lines: usize) {
+        let current = self.effective_history_scroll();
+        self.history_scroll = current.saturating_sub(lines.max(1));
+    }
+
+    pub fn scroll_history_down(&mut self, lines: usize) {
+        let max_scroll = self.max_history_scroll();
+        let next = self
+            .effective_history_scroll()
+            .saturating_add(lines.max(1))
+            .min(max_scroll);
+        if next >= max_scroll {
+            self.history_scroll = usize::MAX;
+        } else {
+            self.history_scroll = next;
+        }
+    }
+
+    pub fn scroll_history_page_up(&mut self) {
+        self.scroll_history_up(self.history_visible_rows.max(1));
+    }
+
+    pub fn scroll_history_page_down(&mut self) {
+        self.scroll_history_down(self.history_visible_rows.max(1));
+    }
+
+    pub fn scroll_history_top(&mut self) {
+        self.history_scroll = 0;
+    }
+
+    pub fn scroll_history_bottom(&mut self) {
+        self.history_scroll = usize::MAX;
+    }
+
+    pub fn is_history_scrolled_to_bottom(&self) -> bool {
+        let max_scroll = self.max_history_scroll();
+        if max_scroll == 0 {
+            return true;
+        }
+        self.history_scroll == usize::MAX || self.history_scroll >= max_scroll
+    }
+
+    pub fn reset_history_scroll(&mut self) {
+        self.history_scroll = usize::MAX;
+        self.history_total_lines = 0;
+        self.history_visible_rows = 0;
+    }
+
+    pub fn reset_for_new_session(&mut self, session_id: impl Into<String>) {
+        self.session_id = session_id.into();
+        self.session_state = SESSION_STATE_FRESH.to_string();
+        self.turn_state = TurnState::Idle;
+        self.active_turn_id = None;
+        self.active_assistant_message_index = None;
+        self.input = InputState::default();
+        self.messages = Self::default_messages();
+        self.reset_history_scroll();
+        self.last_tick = Instant::now();
     }
 
     pub fn begin_streaming_turn(&mut self, turn_id: impl Into<String>) {
@@ -324,6 +432,7 @@ impl AppState {
         self.messages
             .push(ChatMessage::new(MessageRole::Assistant, String::new()));
         self.active_assistant_message_index = Some(self.messages.len() - 1);
+        self.scroll_history_bottom();
     }
 
     pub fn has_active_turn(&self) -> bool {
@@ -388,6 +497,23 @@ impl AppState {
     pub fn touch_tick(&mut self) {
         self.last_tick = Instant::now();
     }
+
+    fn max_history_scroll(&self) -> usize {
+        self.history_total_lines
+            .saturating_sub(self.history_visible_rows)
+    }
+
+    fn normalize_history_scroll(&mut self) {
+        let max_scroll = self.max_history_scroll();
+        if self.history_scroll == usize::MAX {
+            return;
+        }
+        if self.history_scroll >= max_scroll {
+            self.history_scroll = usize::MAX;
+            return;
+        }
+        self.history_scroll = self.history_scroll.min(max_scroll);
+    }
 }
 
 #[cfg(test)]
@@ -414,6 +540,7 @@ mod tests {
             parse_local_command("/logout"),
             Some(Ok(LocalCommand::Logout))
         );
+        assert_eq!(parse_local_command("/new"), Some(Ok(LocalCommand::New)));
         assert_eq!(
             parse_local_command("/cancel"),
             Some(Ok(LocalCommand::Cancel))
@@ -427,6 +554,18 @@ mod tests {
             result,
             Err(CommandParseError::UnexpectedArguments {
                 command: "/quit",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn new_command_with_arguments_is_rejected() {
+        let result = parse_local_command("/new now").expect("slash command should be parsed");
+        assert!(matches!(
+            result,
+            Err(CommandParseError::UnexpectedArguments {
+                command: "/new",
                 ..
             })
         ));
@@ -465,5 +604,55 @@ mod tests {
         assert!(input.backspace());
         assert_eq!(input.text, "rus");
         assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn history_scroll_defaults_to_follow_bottom() {
+        let mut state = AppState::default();
+        state.set_history_layout(20, 5);
+
+        assert_eq!(state.effective_history_scroll(), 15);
+        assert!(state.is_history_scrolled_to_bottom());
+    }
+
+    #[test]
+    fn history_scroll_up_moves_off_bottom_and_down_repins() {
+        let mut state = AppState::default();
+        state.set_history_layout(30, 10);
+
+        state.scroll_history_up(3);
+        assert_eq!(state.effective_history_scroll(), 17);
+        assert!(!state.is_history_scrolled_to_bottom());
+
+        state.scroll_history_down(100);
+        assert_eq!(state.effective_history_scroll(), 20);
+        assert!(state.is_history_scrolled_to_bottom());
+        assert_eq!(state.history_scroll, usize::MAX);
+    }
+
+    #[test]
+    fn history_page_scrolling_uses_visible_rows() {
+        let mut state = AppState::default();
+        state.set_history_layout(80, 12);
+
+        state.scroll_history_page_up();
+        assert_eq!(state.effective_history_scroll(), 56);
+
+        state.scroll_history_page_down();
+        assert_eq!(state.effective_history_scroll(), 68);
+        assert_eq!(state.history_scroll, usize::MAX);
+    }
+
+    #[test]
+    fn begin_streaming_turn_forces_history_follow_bottom() {
+        let mut state = AppState::default();
+        state.set_history_layout(80, 12);
+        state.scroll_history_top();
+        assert!(!state.is_history_scrolled_to_bottom());
+
+        state.begin_streaming_turn("turn-1");
+
+        assert_eq!(state.history_scroll, usize::MAX);
+        assert!(state.is_history_scrolled_to_bottom());
     }
 }
